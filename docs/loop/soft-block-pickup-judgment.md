@@ -6,8 +6,9 @@ supervisor.** When the node(s) a soft-blocked task is set to *reassess after* re
 AgentJira moves that task into a new **`evaluating_soft_block`** status. That status is an agent
 turn: the deterministic supervisor dispatches a **fresh, isolated, per-node headless "judge"
 session** that reads the now-settled decisions plus the surrounding graph and returns a
-structured verdict. AgentJira routes on the verdict — promote to `ready_for_pickup`, re-arm to
-wait, or escalate to the human reviewer.
+structured verdict. AgentJira routes on the verdict — promote to `ready_for_pickup` or re-arm to
+wait. The judge is trusted to make this call for v1; the human's only lever is a manual override
+on the board, not a designed verdict route.
 
 This node is a spike, not loop code. It decides the mechanism; it bakes nothing into the loop.
 It `relates_to` the deterministic supervisor loop (`c312861e`) but is deliberately **not** a
@@ -59,8 +60,9 @@ across three layers, each staying within its remit:
 So the LLM judgment is real and lives in v1, but it never touches the supervisor's loop. It is a
 new *board state* serviced by a *throwaway session* — which is also, deliberately, a first slice
 of the reviewer role moving off the human: today the human eyeballs whether a soft-blocked node
-is safe to start; the judge session takes that call, with the human left as the escalation
-backstop and progressively offloaded from there.
+is safe to start; for v1 the judge session takes that call outright. The human is not wired in as
+an escalation backstop — the judge decides `proceed` / `not_yet`, and if the human disagrees they
+can always manually override on the board.
 
 ## Options weighed
 
@@ -78,11 +80,15 @@ blocker is `done`, or when a human attaches an explicit "ok to proceed" tag/edge
 ### (b) LLM judge session, triggered on reassess-after and orchestrated by AgentJira — **chosen**
 
 For each soft-blocked node, AgentJira records a **reassess-after** set: the node(s) whose
-completion means "there is now enough new information to re-judge this." When every node in that
-set reaches `done`, AgentJira moves the soft-blocked node into `evaluating_soft_block`. The
+completion means "there is now enough new information to re-judge this." A reassess-after
+relationship **behaves like a firm block for scheduling** — it defers the node into the "not
+recommended" bucket, so it is not picked up, exactly as a firm block does — until every node in
+that set reaches `done`. At that point, instead of simply unblocking for direct pickup, it fires
+the `evaluating_soft_block` transition. AgentJira moves the soft-blocked node into
+`evaluating_soft_block`. The
 supervisor dispatches a fresh headless judge session; the judge runs `aj context` on the
 settled node(s), reads their decisions and thread plus the surrounding graph, and returns a
-structured verdict (`proceed` / `not_yet` / `escalate`, each with a one-line reason). AgentJira
+structured verdict (`proceed` / `not_yet`, each with a one-line reason). AgentJira
 routes on it.
 
 - **Fit to the constraint** — Clean. Reasoning lives in a disposable session; the supervisor
@@ -134,11 +140,10 @@ the automation proves its worth.
      spec). From here it is ordinary work.
    - `not_yet` → node returns to waiting, **re-armed** against the next reassess-after completion
      (see "Not looping forever"). A one-line reason is posted to the thread.
-   - `escalate` → node goes to `awaiting_human_response` for the human reviewer to decide.
 
-This keeps the human as the **reviewer/backstop** for v1 — the judge only decides the clear
-cases and escalates the rest — and leaves a clean path to offload more of that review to the
-judge as confidence grows (widen what counts as an autonomous `proceed`, narrow `escalate`).
+For v1 the judge decides `proceed` / `not_yet` outright — it is trusted to make the call. The
+human is not wired in as an escalation route; their only lever is a **manual override on the
+board**, available at any time if they disagree with a verdict.
 
 Chosen **for the reviewer's stated direction over leanness**: it is more machinery than deferral,
 but the machinery is where the harness earns its long-term value — an automated, bigger-picture
@@ -157,9 +162,11 @@ reassess-after trigger is itself the primary guard, backed by three more:
   reassess-after completion, not an immediate re-judge. The node cannot be re-evaluated until
   something in its trigger set actually changes again, so an empty board never re-spawns the same
   judge to reach the same `not_yet`.
-- **Escalation is a terminator, not a retry.** A judge that is unsure returns `escalate`, which
-  hands to a human (`awaiting_human_response`) — it does not loop. A judge crash or malformed
-  verdict is treated as `escalate` (or `not_yet` + re-arm), never as an automatic retry storm.
+- **Every non-`proceed` outcome resolves to `not_yet` + re-arm, never a retry.** A judge that is
+  unsure returns `not_yet`, which re-arms the node against its next reassess-after completion
+  rather than re-judging immediately. A judge crash or a malformed verdict is treated the same
+  way — `not_yet` + re-arm — so failure degrades to waiting, never to an automatic retry storm.
+  Because re-arming waits on the *next* completion event, an unsure or failing judge cannot spin.
 - **A `proceed` must make progress, enforced by the claim.** A promoted node is claimed and run
   like any other; its outcome moves it out of the soft-blocked bucket exactly as the
   recommended-set path does. It cannot be promoted, dropped, and re-promoted in a tight cycle,
@@ -169,10 +176,12 @@ reassess-after trigger is itself the primary guard, backed by three more:
 
 - **To AgentJira (the board itself):** this decision asks for two additions — a
   `evaluating_soft_block` status (agent turn, sitting between a soft-blocked node's waiting state
-  and `ready_for_pickup`, with `not_yet`→waiting and `escalate`→`awaiting_human_response`
-  transitions), and a **reassess-after** field on soft-blocked nodes (default: the soft-block
-  blocker(s); overridable to an explicit node set). The reassess-after → `evaluating_soft_block`
-  transition fires when the set is fully `done`. Both are board-side; neither touches the loop.
+  and `ready_for_pickup`, with a `not_yet`→waiting transition), and a **reassess-after** field on
+  soft-blocked nodes (default: the soft-block blocker(s); overridable to an explicit node set). A
+  reassess-after relationship should **behave like a firm block for scheduling** — defer the node
+  into the "not recommended" bucket (not picked up) exactly as a firm block does — but instead of
+  simply unblocking for direct pickup when its set is fully `done`, it fires the reassess-after →
+  `evaluating_soft_block` transition. Both are board-side; neither touches the loop.
 - **To `c312861e` (deterministic supervisor loop):** build v1 against the recommended set only.
   The one forward-looking requirement: treat `evaluating_soft_block` as an agent-turn status that
   dispatches a **judge** session type (read-only, returns a structured verdict) instead of the
@@ -183,6 +192,6 @@ reassess-after trigger is itself the primary guard, backed by three more:
   against the same spend/rate budget — include `evaluating_soft_block` dispatches in whatever
   concurrency and backoff accounting you define. There is no separate judge poll to bound; the
   reassess-after event is the only thing that creates judge work.
-- **When to revisit:** once the judge is running, tune the `proceed` / `escalate` boundary from
-  observed outcomes — the intended trajectory is to widen autonomous `proceed` and shrink
-  `escalate` as the judge proves reliable, moving more of the reviewer's load off the human.
+- **When to revisit:** once the judge is running, tune the `proceed` / `not_yet` boundary from
+  observed outcomes — watch where the human reaches for a manual override, and adjust the judge's
+  bar for an autonomous `proceed` accordingly.
