@@ -7,8 +7,11 @@ instance identity** (a workload-identity role bound to the box via Terraform). A
 **host-root credential broker** does the minting/fetching outside every sandbox; the
 session's clients (`aj`, `git`/`gh`) receive a fresh token through a **credential helper**
 at request time and attach it themselves — so the sandbox never holds a *standing* secret,
-only a scoped ~1h token while it runs. The Claude/Anthropic key is the one un-mintable
-credential: it lives centrally in a secrets manager and is pulled into session memory only.
+only a scoped ~1h token while it runs. That ~1h is the lifetime of each *token*, not a cap on
+session length: the broker **re-mints on demand**, so sessions can run arbitrarily long (see
+[Sessions longer than the token lifetime](#sessions-longer-than-the-token-lifetime)). The Claude
+credential is the one un-mintable exception: v1 runs off a **Max plan**, so it is the operator's
+**OAuth subscription login token**, held centrally and pulled into session memory only.
 
 **v1 deliberately does not terminate TLS.** The stronger "proxy holds the token, session
 holds nothing" shape is real and is written up below as a **v2 hardening** — but it requires
@@ -30,7 +33,11 @@ secrets manager, an STS-style token exchange, a model gateway) are named only as
 
 - **No standing secret in the sandbox** — the session never holds a long-lived key. At most
   it holds a **short-lived, tightly-scoped token** for as long as it runs. A standing secret a
-  session never holds is a standing secret a same-session compromise cannot steal.
+  session never holds is a standing secret a same-session compromise cannot steal. **One honest
+  exception:** v1 runs Claude Code off the operator's **Max plan**, whose login credential Claude
+  authenticates with *in-process* — so that one credential does live in the session. It is called
+  out and bounded in [§2](#2-claude-credentials--anthropicclaude-auth-for-the-claude-code-session),
+  not hand-waved away.
 - **No self-managed long-lived secrets on the host** — nothing durable on the image, in env
   vars, or on disk. The strongest secret is the one the box never holds at rest.
 - **Short-lived / cloud-managed identity** — credentials are supplied at runtime from the
@@ -145,6 +152,27 @@ that can impersonate any site to the sandbox. v1 avoids that and uses option (A)
 secret anywhere on the box, only a short-lived scoped token that transits the session while it
 runs. Option (B) is the clearly-labelled next step if we want to remove even that token.
 
+### Sessions longer than the token lifetime
+
+The reviewer's question: if tokens expire in ~1h, how does a session that runs longer keep going?
+The ~1h is a property of each *token*, **not a ceiling on session length**. The session never
+depends on a single token lasting to the end — the **credential helper re-invokes the broker on
+demand**, so when a token nears expiry the client transparently gets a freshly-minted one off the
+VM's attached identity, which itself **never expires**. Concretely:
+
+- **GitHub** — installation tokens are hard-capped at ~1h by GitHub; the broker re-mints from the
+  App key whenever a `git`/`gh` call presents an aged-out token. A multi-hour session simply draws
+  a new 1h token each time it needs one.
+- **`aj`** — the Supabase agent JWT is refreshed (or re-exchanged from the central agent key) by
+  the broker before it lapses, the same way.
+- **Claude** — Claude Code refreshes its short-lived OAuth **access** token **in-process** from the
+  Max-plan login credential for the whole session, so a long run never re-auths out of band.
+
+Net: session length is unbounded by credential lifetime. Short token lifetimes cost nothing in
+continuity — they only shrink the window a *stolen* token is usable — because re-minting is cheap
+and keyed off the never-expiring attached identity. (The per-session mint-call **volume** this
+implies scales with session length and is flagged for the cost node.)
+
 ## The three credentials
 
 ### 1. `aj` login — authenticating the sandbox to AgentJira
@@ -165,29 +193,37 @@ runs. Option (B) is the clearly-labelled next step if we want to remove even tha
 
 ### 2. Claude credentials — Anthropic/Claude auth for the Claude Code session
 
-- **Name:** Claude Code API credential (an Anthropic API key, or a Claude OAuth session
-  token).
+- **Name:** Claude Code **subscription (OAuth) login credential**. v1 runs Claude Code off the
+  operator's **Max plan**, not a metered API key — so the credential is the Max-plan **OAuth token**
+  (generated once for headless use via `claude setup-token` and supplied to the session as
+  `CLAUDE_CODE_OAUTH_TOKEN`), *not* an `ANTHROPIC_API_KEY`. (An API key remains a drop-in alternative
+  if we ever bill per-token, but it is not the v1 path.)
 - **The exception — this one genuinely lives in the session.** Claude Code **authenticates
-  in-process**: it reads its key/OAuth token from its own environment, attaches the auth itself,
-  and (for the OAuth/`setup-token` flow) refreshes the token in-process. Neither a broker nor a
-  proxy can stand in for that in-client auth dance, so the credential must be **present inside
-  the session**. This is the reviewer's flagged exception, and it makes Claude the credential
-  with the largest in-session footprint.
-- **Where it lives:** Anthropic keys do **not** federate with cloud IAM, so a long-lived
-  secret must exist somewhere. It lives **centrally in the secrets manager** (source of truth,
-  KMS-encrypted at rest), **never on the host at rest**. At session start the VM identity —
+  in-process**: it reads the OAuth token from its own environment, attaches the auth itself, and
+  refreshes the short-lived access token in-process from the login credential. Neither a broker nor a
+  proxy can stand in for that in-client auth dance, so the credential must be **present inside the
+  session**. This is the reviewer's flagged exception, and it makes Claude the credential with the
+  largest in-session footprint.
+- **Where it lives:** a subscription OAuth token does **not** federate with cloud IAM, so a
+  durable secret must exist somewhere. It lives **centrally in the secrets manager** (source of
+  truth, KMS-encrypted at rest), **never on the host at rest**. At session start the VM identity —
   under a tight, read-only policy scoped to just this secret — pulls it into **session memory
   (tmpfs)**, injected only into that session's sandbox. It is never written to the image or
   persistent disk, and never shared between sessions.
-- **Lifetime:** Long-lived *centrally* (rotated on a schedule in the secrets manager), but its
-  **presence in the session is session-scoped** — fetched at start, wiped at teardown. Use a
-  **workspace/project-scoped key with a spend cap** so blast radius is bounded even if a single
-  session leaks it.
-- **Stronger option (v2, removes the exception):** route Claude through a **cloud model
-  gateway** (e.g. a provider's managed model endpoint) so the VM's attached identity mints a
-  short-lived token per session and **no Anthropic key exists on our side at all**. It trades
-  pure vendor-neutrality for cloud-IAM-native auth, so it is flagged for v2 rather than mandated
-  at v1.
+- **Lifetime:** the OAuth **access** token is short-lived and refreshed in-process for the life of
+  the session; the durable **login/refresh** credential is long-lived *centrally* (rotated by
+  re-running `setup-token`) but its **presence in the session is session-scoped** — fetched at start,
+  wiped at teardown.
+- **Blast radius (differs from an API key).** A leaked subscription token abuses the operator's
+  **Max-plan account and quota**, not a metered spend, so an API-style *spend cap* doesn't apply.
+  Bound it instead by: central-only storage, in-memory-only per session, egress locked to the three
+  allowlisted hosts, and **revocation by rotating the login** (`setup-token`) if a leak is suspected.
+  It is the one credential with account-level reach, which is why it is the residual weak point below.
+- **Stronger option (v2, removes the exception) — with a cost tradeoff:** route Claude through a
+  **cloud model gateway** so the VM's attached identity mints a short-lived token per session and
+  **no Claude credential lives in the session at all**. Note the tension for the cost node: a gateway
+  is **API-metered**, so this trades the Max plan's flat subscription cost for per-token API billing —
+  a security win that is *not* cost-neutral. Flagged for v2, not mandated at v1.
 
 ### 3. GitHub access — repo access to raise PRs
 
@@ -212,15 +248,16 @@ runs. Option (B) is the clearly-labelled next step if we want to remove even tha
 | Credential | Name | Minted/held by | In the session? | Lifetime |
 |---|---|---|---|---|
 | `aj` login | AgentJira agent session JWT | **Host-root broker** (minted from VM identity via OIDC → token broker) | Only the ≤1h **JWT**, via credential helper — no standing secret | Session-scoped, ~1h, refreshed |
-| Claude | Claude Code API credential | Central secrets manager → **session tmpfs** | **Yes** (the exception — in-process auth) | Long-lived centrally / **session-scoped in memory** |
+| Claude | Claude Code **Max-plan OAuth** login token (`setup-token`) | Central secrets manager → **session tmpfs** | **Yes** (the exception — in-process auth) | Access token refreshed in-process; login credential long-lived centrally / **session-scoped in memory** |
 | GitHub | GitHub App installation token | **Host-root broker** (App key in secrets manager → installation token) | Only the ≤1h **installation token**, via credential helper — App key stays central | ~1h (GitHub cap), re-minted on demand |
 
 **The v1 call:** the box holds **no self-managed long-lived secret**, and the session holds
 **no standing secret** — only short-lived, narrowly-scoped tokens minted at request time off
 the VM's attached identity by a host-root broker and handed to the clients via a credential
-helper. The Claude/Anthropic key is the one exception, because Claude Code authenticates
-in-process; it is held centrally and pulled into session memory only, and the v2 model-gateway
-path removes even that. **v1 does not terminate TLS** — the proxy stays a plain
+helper. The Claude credential is the one exception, because Claude Code authenticates
+in-process; at v1 it is the operator's **Max-plan OAuth login token**, held centrally and pulled
+into session memory only, and the v2 model-gateway path removes even that (moving Claude onto
+API-metered billing). **v1 does not terminate TLS** — the proxy stays a plain
 hostname-allowlist tunnel (consistent with the isolation node). Removing the short-lived tokens
 from the session entirely is the **v2** proxy-injection hardening, which is what introduces TLS
 termination.
@@ -250,9 +287,12 @@ security and clarity on each flow):
   GitHub/AgentJira request bodies in plaintext at the proxy. The security it buys at v1 is only
   *removing a ≤1h scoped token from the session* — modest, given the Claude key is already in the
   session. Not worth manufacturing a MITM CA for one solo box; deferred to v2.
-- **Claude key is the weakest link** (long-lived, un-federatable, and unavoidably in the
-  sandbox). Bounded by: central-only storage, per-session in-memory fetch, workspace-scoped key +
-  spend cap, scheduled rotation, and the v2 gateway path that removes the key from our side.
+- **The Claude Max-plan login token is the weakest link** (durable, un-federatable, and
+  unavoidably in the sandbox — and, being a subscription credential, its blast radius is the
+  operator's account/quota rather than a metered spend). Bounded by: central-only storage,
+  per-session in-memory fetch, egress locked to the allowlisted hosts, revocation by rotating the
+  login (`setup-token`), and the v2 gateway path that removes the credential from the session
+  entirely (at the cost of API-metered billing).
 - **Attached-identity compromise = root of trust compromise.** If an attacker runs code as the
   VM identity they can mint/fetch everything. Mitigations: scope the instance role to the
   *minimum* (read the Claude + App secrets, call the token broker, nothing else); per-session
@@ -282,8 +322,8 @@ security and clarity on each flow):
   broker-minted ≤1h JWT so the session holds no durable AgentJira credential.
 - **Secrets baked into the Terraform state / image build** — leaks long-lived secrets into state
   files and image layers; the box should receive nothing durable.
-- **Direct Anthropic key on disk (no secrets manager)** — a long-lived secret persisted on the
-  host with no central rotation, revocation, or scoping.
+- **Claude credential (Max-plan OAuth token or API key) on disk (no secrets manager)** — a
+  long-lived secret persisted on the host with no central rotation, revocation, or scoping.
 
 ## Cross-node consistency note (isolation node `e126cb28` / PR #2)
 
@@ -304,8 +344,9 @@ surprise.
 This node firm-blocks cost. The credential flow introduces these **cost-bearing pieces** to
 price at v1 scale (one solo operator, a single VM, looping sessions):
 
-- **Secrets manager** — stores the Claude key and the GitHub App private key; priced per stored
-  secret + per API access. Every session start does at least one fetch (Claude key + App key).
+- **Secrets manager** — stores the Claude Max-plan OAuth login token and the GitHub App private
+  key; priced per stored secret + per API access. Every session start does at least one fetch
+  (Claude login token + App key).
 - **KMS** — encrypts those secrets at rest and backs the manager; priced per key + per
   cryptographic operation (decrypt on each fetch).
 - **Per-session token minting (in the host-root broker)** — STS-style / OIDC token exchange for
@@ -321,12 +362,11 @@ price at v1 scale (one solo operator, a single VM, looping sessions):
   v2 line item, not v1.
 - **(If the v2 gateway path is taken)** a **cloud model gateway** for Claude would shift Claude
   auth to per-session minted tokens (removing the secrets-manager line for Claude, and removing
-  the last in-session credential) but adds gateway request pricing — flagged so cost can compare
-  the two shapes.
+  the last in-session credential) but **moves Claude from the Max plan's flat subscription onto
+  per-token API billing** plus gateway request pricing — a potentially large cost swing, flagged so
+  cost can compare the flat-subscription (v1) and metered (v2) shapes deliberately.
 
 The attached instance role itself is **free** (it is IAM, not a resource), and colocating the
 credential broker in the already-required egress proxy adds **no new box**. Net v1 cost is small
 and dominated by secrets-manager storage + KMS operations + per-session mint calls, all scaling
 with session count rather than being fixed.
-</content>
-</invoke>
