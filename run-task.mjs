@@ -97,8 +97,24 @@ function buildClaudeArgs(nodeId) {
   if (config.model) {
     args.push("--model", config.model);
   }
-  args.push(buildPrompt(nodeId));
+  // NOTE: the prompt is deliberately NOT appended here — it is written to the
+  // session's stdin in runSession. A multi-line prompt cannot survive as a CLI
+  // argument once we have to launch through a shell on Windows (see spawnTool).
   return args;
+}
+
+// On Windows, `claude` and `aj` are installed as `.cmd` shims, which Node
+// (since CVE-2024-27980) refuses to launch without a shell — a plain
+// spawn("aj", …) fails with ENOENT. So on Windows we spawn through a shell and
+// quote each argument (cmd.exe re-parses the command line). Multi-line values
+// (i.e. the prompt) can't be passed as a shell argument at all — they get
+// truncated at the first newline — so runSession feeds the prompt over stdin.
+const IS_WINDOWS = process.platform === "win32";
+function spawnTool(bin, args, stdio) {
+  const finalArgs = IS_WINDOWS
+    ? args.map((a) => (/[\s"&|<>^()%!]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a))
+    : args;
+  return spawn(bin, finalArgs, { stdio, shell: IS_WINDOWS });
 }
 
 // Run the fresh headless session to completion. Resolves with the exit code,
@@ -106,11 +122,14 @@ function buildClaudeArgs(nodeId) {
 function runSession(nodeId) {
   return new Promise((resolve) => {
     const args = buildClaudeArgs(nodeId);
-    log(`spawning: ${config.claudeBin} ${args.slice(0, -1).join(" ")} <prompt>`);
+    log(`spawning: ${config.claudeBin} ${args.join(" ")} <prompt via stdin>`);
 
-    const child = spawn(config.claudeBin, args, {
-      stdio: ["ignore", "pipe", "pipe"], // no stdin; capture stdout+stderr
-    });
+    // stdin is piped so the prompt goes to `claude --print` over stdin rather
+    // than as a CLI argument (shell-safe on Windows; see spawnTool).
+    const child = spawnTool(config.claudeBin, args, ["pipe", "pipe", "pipe"]);
+    child.stdin.on("error", () => {}); // ignore EPIPE if the session exits early
+    child.stdin.write(buildPrompt(nodeId));
+    child.stdin.end();
 
     let stdout = "";
     let timedOut = false;
@@ -156,9 +175,11 @@ function runSession(nodeId) {
 // Read the node's current status via the authenticated aj CLI.
 function queryNodeStatus(nodeId) {
   return new Promise((resolve) => {
-    const child = spawn(config.ajBin, ["context", nodeId, "--json"], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const child = spawnTool(config.ajBin, ["context", nodeId, "--json"], [
+      "ignore",
+      "pipe",
+      "pipe",
+    ]);
     let out = "";
     child.stdout.on("data", (d) => (out += d));
     child.stderr.on("data", (d) => process.stderr.write(d));
