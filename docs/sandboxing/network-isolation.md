@@ -83,6 +83,33 @@ as an always-on daemon on the VM, *outside* every per-session sandbox. Wire it u
 This gives name-based allowlisting (solving option 1's IP-list problem) behind a hard L3/L4
 default-deny boundary (giving the proxy teeth nothing can route around).
 
+### Same VM — what stops a session just going around it?
+
+The proxy runs on the same box as the sessions, so the isolation can't be *physical*
+separation — it's a **privilege/trust-domain** boundary, and that's what makes colocation safe:
+
+- **A session does not have host root.** The hosting doc's "full root" means the *operator*
+  provisions the VM with full root so every isolation primitive is available — it does **not**
+  mean each session runs as host-root. A session is confined to a per-session sandbox
+  (dedicated user / user-namespaced container); any root it holds is root *inside that
+  namespace*, which does not map to the host's real UID 0.
+- **The firewall and proxy live outside that sandbox, in the host root domain.** The default-deny
+  `nftables`/`iptables` rules and the proxy daemon are owned by host-root and sit outside every
+  session sandbox. A confined session can't edit the host's netfilter tables, can't bind the
+  host network namespace, and can't stop or reconfigure the proxy — those actions require the
+  host-root privilege the sandbox precisely withholds.
+- **So the only outbound path physically reachable from inside a sandbox is the proxy's port.**
+  Default-deny drops every other socket regardless of what the session tries; there is no
+  "direct to the internet" route to race for, because the host firewall — not the session —
+  decides what leaves the box. Same reasoning protects the audit log: a session can't rewrite
+  a log it has no privilege to touch, which is also why logs ship off-box.
+
+Put differently: a **separate** proxy VM would add a network hop and a second billable box but
+would **not** strengthen the security property, because the host firewall is already an
+egress boundary the sandbox cannot circumvent from the inside. Colocation is a cost/latency win
+with no isolation cost — *provided* the per-session sandbox never grants host-root (a hard
+requirement this posture places on the hosting/isolation implementation).
+
 ### Does the proxy double as the audit point?
 
 **Yes.** Because every outbound request is funneled through this one process, its access log is
@@ -106,7 +133,9 @@ Layered, default-deny:
    hostname-allowlisting GitHub + Anthropic API + AgentJira Supabase, logging every request.
 3. **Per-session sandbox** (container / namespace / dedicated user, from the hosting node) for
    process & filesystem isolation, routed through the proxy for network — *not* relied on for
-   network policy itself.
+   network policy itself. **Hard requirement on this layer: the sandbox must never grant a
+   session host-root**, or it could rewrite the firewall/proxy and the same-VM boundary
+   collapses (see "Same VM — what stops a session just going around it?").
 4. **Claude Code sandbox / permission modes** — innermost layer, enabled as cheap
    defense-in-depth.
 
