@@ -1,8 +1,8 @@
-#!/usr/bin/env node
+import { spawn, type StdioOptions } from "node:child_process";
 
-import { spawn } from "node:child_process";
+type Outcome = "completed" | "asked_user" | "errored";
 
-const EXIT_CODES = {
+const EXIT_CODES: Record<Outcome, number> = {
   completed: 0,
   asked_user: 10,
   errored: 20,
@@ -11,18 +11,18 @@ const USAGE_EXIT = 2;
 
 const ASKED_USER_STATUS = "awaiting_human_response";
 
-function emitAndExit(nodeId, outcome, detail) {
+function emitAndExit(nodeId: string | null, outcome: Outcome, detail: string): never {
   process.stdout.write(
     JSON.stringify({ node_id: nodeId, outcome, detail }) + "\n"
   );
   process.exit(EXIT_CODES[outcome]);
 }
 
-function log(...args) {
+function log(...args: string[]): void {
   process.stderr.write("[run-task] " + args.join(" ") + "\n");
 }
 
-function buildPrompt(nodeId) {
+function buildPrompt(nodeId: string): string {
   return [
     `You are a headless AgentJira worker session. Work exactly one node: ${nodeId}.`,
     ``,
@@ -39,7 +39,7 @@ function buildPrompt(nodeId) {
   ].join("\n");
 }
 
-function buildClaudeArgs() {
+function buildClaudeArgs(): string[] {
   return [
     "--print",
     "--permission-mode", "auto",
@@ -50,29 +50,33 @@ function buildClaudeArgs() {
 
 const IS_WINDOWS = process.platform === "win32";
 
-function spawnTool(bin, args, stdio) {
+function spawnTool(bin: string, args: string[], stdio: StdioOptions) {
+  // On Windows we spawn through the shell (so `.cmd` shims like `claude`/`aj`
+  // resolve), which means each arg is re-parsed by cmd.exe. Quote any arg
+  // containing whitespace or a cmd metacharacter so it survives that second
+  // parse intact; POSIX shells get the args untouched via the array form.
   const finalArgs = IS_WINDOWS
     ? args.map((a) => (/[\s"&|<>^()%!]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a))
     : args;
   return spawn(bin, finalArgs, { stdio, shell: IS_WINDOWS });
 }
 
-function runSession(nodeId) {
+function runSession(nodeId: string): Promise<{ exitCode: number | null; sessionIsError: boolean }> {
   return new Promise((resolve) => {
     const args = buildClaudeArgs();
     log(`spawning: claude ${args.join(" ")} <prompt via stdin>`);
 
     const child = spawnTool("claude", args, ["pipe", "pipe", "pipe"]);
-    child.stdin.on("error", () => {});
-    child.stdin.write(buildPrompt(nodeId));
-    child.stdin.end();
+    child.stdin?.on("error", () => {});
+    child.stdin?.write(buildPrompt(nodeId));
+    child.stdin?.end();
 
     let stdout = "";
-    child.stdout.on("data", (d) => {
+    child.stdout?.on("data", (d) => {
       stdout += d;
       process.stderr.write(d);
     });
-    child.stderr.on("data", (d) => process.stderr.write(d));
+    child.stderr?.on("data", (d) => process.stderr.write(d));
 
     child.on("error", (err) => {
       log(`failed to spawn session: ${err.message}`);
@@ -90,13 +94,13 @@ function runSession(nodeId) {
   });
 }
 
-function preflight() {
+function preflight(): Promise<{ ok: true } | { ok: false; detail: string }> {
   return new Promise((resolve) => {
     const child = spawnTool("aj", ["whoami", "--json"], ["ignore", "pipe", "pipe"]);
     let out = "";
     let err = "";
-    child.stdout.on("data", (d) => (out += d));
-    child.stderr.on("data", (d) => (err += d));
+    child.stdout?.on("data", (d) => (out += d));
+    child.stderr?.on("data", (d) => (err += d));
     child.on("error", (e) =>
       resolve({ ok: false, detail: `\`aj\` not runnable: ${e.message}` })
     );
@@ -118,16 +122,12 @@ function preflight() {
   });
 }
 
-function queryNodeStatus(nodeId) {
+function queryNodeStatus(nodeId: string): Promise<string | null> {
   return new Promise((resolve) => {
-    const child = spawnTool("aj", ["context", nodeId, "--json"], [
-      "ignore",
-      "pipe",
-      "pipe",
-    ]);
+    const child = spawnTool("aj", ["context", nodeId, "--json"], ["ignore", "pipe", "pipe"]);
     let out = "";
-    child.stdout.on("data", (d) => (out += d));
-    child.stderr.on("data", (d) => process.stderr.write(d));
+    child.stdout?.on("data", (d) => (out += d));
+    child.stderr?.on("data", (d) => process.stderr.write(d));
     child.on("error", () => resolve(null));
     child.on("close", () => {
       try {
@@ -139,7 +139,10 @@ function queryNodeStatus(nodeId) {
   });
 }
 
-function classify({ exitCode, sessionIsError }, postStatus) {
+function classify(
+  { exitCode, sessionIsError }: { exitCode: number | null; sessionIsError: boolean },
+  postStatus: string | null
+): { outcome: Outcome; detail: string } {
   if (exitCode !== 0 || sessionIsError) {
     return {
       outcome: "errored",
@@ -155,7 +158,7 @@ function classify({ exitCode, sessionIsError }, postStatus) {
   return { outcome: "completed", detail: `node status=${postStatus}` };
 }
 
-async function main() {
+async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv.length === 0 || argv[0] === "-h" || argv[0] === "--help") {
     process.stderr.write(
@@ -193,7 +196,8 @@ async function main() {
   emitAndExit(nodeId, outcome, detail);
 }
 
-main().catch((err) => {
-  const nodeId = process.argv[2] || null;
-  emitAndExit(nodeId, "errored", `runner error: ${err.message}`);
+main().catch((err: unknown) => {
+  const nodeId = process.argv[2] ?? null;
+  const message = err instanceof Error ? err.message : String(err);
+  emitAndExit(nodeId, "errored", `runner error: ${message}`);
 });
