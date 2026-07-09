@@ -1,15 +1,18 @@
 # Soft-block pickup judgment decision
 
 **Status:** Decided (v1)
-**Decision:** **Defer.** For v1 the supervisor loop picks up **only** the CLI's
-clearly-recommended set; soft-blocked nodes stay human-picked. The recommended *eventual*
-mechanism, when we do automate it, is a **fresh per-candidate headless "judge" session** — never
-a long-lived stateful supervisor.
+**Decision:** **Automate it with an LLM judge, orchestrated by AgentJira — not by the
+supervisor.** When the node(s) a soft-blocked task is set to *reassess after* reach `done`,
+AgentJira moves that task into a new **`evaluating_soft_block`** status. That status is an agent
+turn: the deterministic supervisor dispatches a **fresh, isolated, per-node headless "judge"
+session** that reads the now-settled decisions plus the surrounding graph and returns a
+structured verdict. AgentJira routes on the verdict — promote to `ready_for_pickup`, re-arm to
+wait, or escalate to the human reviewer.
 
 This node is a spike, not loop code. It decides the mechanism; it bakes nothing into the loop.
 It `relates_to` the deterministic supervisor loop (`c312861e`) but is deliberately **not** a
 firm block: the loop ships first over the clearly-recommended set, and this extends selection
-later.
+later — via an AgentJira status the loop already knows how to read, not via new supervisor logic.
 
 ## The problem
 
@@ -23,135 +26,163 @@ judgment, not a constraint — pick up soft-blocked work *only* when you have no
 and *only* when proceeding isn't a stretch. "A stretch" has a precise meaning here: if
 proceeding requires guessing at decisions the blocker will make, leave it.
 
-The question this node answers: **how does a stateless harness make that judgment call?** A
-human picker reads A's thread and decides "settled enough". The supervisor has no eyes and no
-memory. We need a mechanism that reproduces "the blocker's shared decisions are settled enough
-that proceeding isn't a guess" — or a defensible reason to not try yet.
+The question this node answers: **how does the harness make that judgment call without a human
+doing it by hand each time?** A human picker reads A's thread and decides "settled enough". We
+want to reproduce "the blocker's shared decisions are settled enough that proceeding isn't a
+guess" — and to do it with an LLM, not a human, because a session that reads the surrounding
+graph can form the **bigger long-term picture** a per-ticket human glance misses.
 
-## The hard constraint
+## The hard constraint — and where the judgment actually lives
 
 From the human's `split_decision` on the loop subtree: **the supervisor is deterministic plain
-code with no growing context.** It reads `aj tasks --json`, invokes the runner, acts on the
-outcome, and repeats. It is not an agent and must never accumulate context or reason with an LLM
-in-process.
+code with no growing context.** It reads `aj tasks --json`, dispatches a disposable session per
+task, acts on the outcome, and repeats. It is not an agent and must never accumulate context or
+reason with an LLM in-process.
 
-This is load-bearing for the options below. Judging whether a soft block is settled is a
-reading-comprehension task over A's decisions and thread — inherently LLM-shaped. So any
-mechanism that needs reasoning **must run as a fresh, isolated, per-task headless session** (the
-same shape as the single-session runner): spawned, given exactly one candidate, returns a
-verdict, dies. It may never live inside the supervisor as a stateful judge.
+That constraint binds the **supervisor** — it does not forbid the *system* from making an
+LLM-shaped judgment. The reviewer's steer resolves the apparent tension by splitting the work
+across three layers, each staying within its remit:
+
+- **AgentJira (the board)** owns the *state*. It gains a new status, `evaluating_soft_block`, and
+  a *reassess-after* trigger on soft-blocked nodes. When the trigger fires, AgentJira flips the
+  node into `evaluating_soft_block` and, on the verdict coming back, routes it onward. This is
+  data and a state machine — no reasoning, no growing context.
+- **The supervisor** stays exactly as specified: it reads `aj tasks --json`, sees an
+  `evaluating_soft_block` node as an agent turn, and dispatches a session for it — the same way
+  it dispatches a runner session for a `ready_for_pickup` node. It never inspects the decision;
+  it only sees a status and, later, an opaque outcome.
+- **The judge session** does the reasoning. It is a **fresh, isolated, per-node headless
+  session** — the same disposable shape as the single-session runner: spawned, given exactly one
+  candidate, reads context, emits a structured verdict, dies. No long-lived stateful judge ever
+  exists.
+
+So the LLM judgment is real and lives in v1, but it never touches the supervisor's loop. It is a
+new *board state* serviced by a *throwaway session* — which is also, deliberately, a first slice
+of the reviewer role moving off the human: today the human eyeballs whether a soft-blocked node
+is safe to start; the judge session takes that call, with the human left as the escalation
+backstop and progressively offloaded from there.
 
 ## Options weighed
 
 ### (a) Deterministic-only heuristic
 
-Plain code in the supervisor decides eligibility with no LLM — e.g. promote a soft-blocked node
-into the recommended set only when its blocker is `done`, or when a human has attached an
-explicit "ok to proceed" tag/edge.
+Plain code decides eligibility with no LLM — e.g. promote a soft-blocked node the moment its
+blocker is `done`, or when a human attaches an explicit "ok to proceed" tag/edge.
 
-- **Fit to the constraint** — Perfect: it *is* plain code, no context, no session.
-- **Weakness** — It doesn't actually answer the question. "Blocker is `done`" collapses a soft
-  block into a firm block (wait for completion), throwing away the entire point of a soft
-  block, which is that you *can* proceed before the blocker finishes when the relevant decision
-  is settled. A settled decision is usually reached long before the blocker node is `done`. And
-  a human "ok to proceed" tag is just human picking with extra steps — the human made the
-  judgment, not the harness.
+- **Fit to the constraint** — Perfect: it *is* plain code, no session.
+- **Weakness** — It doesn't actually judge. Auto-promoting on "blocker `done`" makes no
+  settledness assessment at all — it can't tell a settled decision from an unsettled one, and it
+  can't weigh the bigger-picture fit the reviewer explicitly wants. A human "ok to proceed" tag is
+  just human picking with extra steps. Rejected.
 
-### (b) Fresh per-candidate headless "judge" session
+### (b) LLM judge session, triggered on reassess-after and orchestrated by AgentJira — **chosen**
 
-For each soft-blocked candidate the supervisor would otherwise skip, spawn a **fresh headless
-session** scoped to exactly that candidate. It runs `aj context` on the blocker, reads the
-blocker's decisions and thread, and returns a structured yes/no (+ one-line reason). The
-supervisor treats the verdict as opaque data: `yes` → add to the work set; `no` → leave it.
+For each soft-blocked node, AgentJira records a **reassess-after** set: the node(s) whose
+completion means "there is now enough new information to re-judge this." When every node in that
+set reaches `done`, AgentJira moves the soft-blocked node into `evaluating_soft_block`. The
+supervisor dispatches a fresh headless judge session; the judge runs `aj context` on the
+settled node(s), reads their decisions and thread plus the surrounding graph, and returns a
+structured verdict (`proceed` / `not_yet` / `escalate`, each with a one-line reason). AgentJira
+routes on it.
 
-- **Fit to the constraint** — Clean. The reasoning lives in a disposable session, exactly like
-  the runner; the supervisor stays deterministic plain code and only ever sees a boolean. No
-  growing context anywhere.
-- **Weakness** — It is real cost and real machinery: a second session type, a prompt contract, a
-  structured-output schema, and a spend/latency budget for judging work that, by definition, was
-  already deprioritised. It is the *right* long-term shape but not obviously worth building
-  before the loop has even shipped its recommended-set path.
+- **Fit to the constraint** — Clean. Reasoning lives in a disposable session; the supervisor
+  stays deterministic and only ever sees a status and an outcome; the board only ever stores
+  state. No growing context anywhere.
+- **Why it wins** — It is the only option that *actually judges* settledness, it uses an LLM (the
+  reviewer's explicit want), it reads wide enough to get the long-term picture, and its trigger
+  is event-driven — so it evaluates when something concrete changed, not on a poll. The cost
+  (a new status, a judge prompt contract, a structured-output schema, a reassess-after field) is
+  real but bounded, and most of it is AgentJira surface rather than loop code.
 
 ### (c) Defer — soft-blocks stay human-picked for v1
 
-The supervisor works only the clearly-recommended set. Soft-blocked nodes remain in the "not
-recommended" bucket and are picked up by humans (or by an explicit human hand-off) until we have
-evidence the automation is worth it.
+The supervisor works only the clearly-recommended set; soft-blocked nodes stay human-picked until
+the automation proves its worth.
 
 - **Fit to the constraint** — Trivially satisfied: nothing new runs.
-- **Weakness** — Soft-blocked work waits on a human. Given these are *already* the
-  deprioritised, judgment-heavy tail, that is an acceptable v1 gap rather than a real loss.
-
-## v1 recommendation
-
-**Defer (c), with (b) as the named v2.** Ship the loop over the clearly-recommended set first;
-keep soft-blocks human-picked. This is chosen **for leanness, reversible over optimal**, the same
-posture as the hosting decision:
-
-- The clearly-recommended set is where the loop earns its keep. Soft-blocked nodes are the
-  deprioritised tail *by construction* — the rulebook already says only pick them up with nothing
-  else to do. Automating the tail before the trunk ships is inverted priority.
-- (a) is rejected as a false economy — it's cheap but answers the wrong question, degrading a
-  soft block into a firm one or into disguised human picking.
-- (b) is the correct mechanism and the explicit v2, but it is net-new session machinery whose
-  value is unproven until the loop is running and we can see how often soft-blocked work actually
-  starves. Deferring keeps it fully reversible: nothing about shipping the recommended-set loop
-  now forecloses adding a judge session later.
+- **Weakness** — It leans on human intervention indefinitely, which is precisely what the
+  reviewer wants *off* the critical path — the value here is the system forming a bigger-picture
+  judgment automatically, and deferral forecloses exactly that. Rejected as the v1 direction (it
+  remains the trivial fallback if the judge is ever unavailable). Rejected.
 
 ### One-line reason per rejected option
 
-- **(a) Deterministic-only heuristic:** cheap but wrong — "blocker `done`" is just a firm block,
-  and a human "proceed" tag is just human picking, so it never actually judges settledness.
-- **(b) Judge session now:** the right long-term shape, but net-new session machinery whose value
-  is unproven before the loop has even shipped its recommended-set path — hold it as v2.
+- **(a) Deterministic-only heuristic:** cheap but blind — promoting on "blocker `done`" makes no
+  settledness judgment and can't weigh the bigger picture the reviewer wants.
+- **(c) Defer:** keeps a human on the critical path indefinitely, which is the thing we are
+  trying to automate away — not the v1 direction.
 
-## How this feeds the supervisor loop (`c312861e`)
+## v1 recommendation
 
-`c312861e` is a stateless daemon that reads the next task from `aj tasks --json` — the CLI's
-deterministic, block-aware recommended set — and works it. Under this decision, **that contract
-is unchanged for v1**: the supervisor consumes only the recommended set and never looks at the
-"not recommended" bucket. No soft-block code ships in the loop.
+**Build (b): the reassess-after → `evaluating_soft_block` → judge-session pipeline.** Concretely:
 
-The v2 extension slots in without disturbing that contract: between "read `aj tasks --json`" and
-"invoke the runner", the supervisor gains an optional pass that, *only when the recommended set is
-empty*, takes each soft-blocked candidate and spawns a judge session (b); a `yes` verdict
-promotes that node into the work set for this iteration. The supervisor still only ever sees a
-deterministic list plus opaque booleans — no growing context, no in-process reasoning.
+1. **Reassess-after trigger (AgentJira).** A soft-blocked node carries a reassess-after set of
+   node ids. Default it to the node's soft-block blocker(s); allow it to be set explicitly so the
+   human can point it at the specific decision node that settles the question rather than the whole
+   downstream subtree. Because decisions in this graph are *their own nodes* (this doc is one),
+   "reassess after node X is `done`" fires precisely when the decision is settled — which is the
+   right signal, and is *not* the same as waiting for a big implementation blocker to finish.
+2. **`evaluating_soft_block` status (AgentJira).** When every node in the reassess-after set is
+   `done`, the board moves the node from its waiting state into `evaluating_soft_block`, an
+   **agent-turn** status. It surfaces in `aj tasks` as agent-actionable, like any other agent turn.
+3. **Judge session (supervisor dispatches, session reasons).** The supervisor dispatches a fresh
+   headless judge scoped to that one node. The judge reads the settled node(s) and enough of the
+   surrounding graph to form the bigger-picture call, and returns a structured verdict. It
+   **reads only** — never claims, edits, or posts.
+4. **Verdict routing (AgentJira).**
+   - `proceed` → node advances to `ready_for_pickup` (or `awaiting_agent_spec` if it still needs a
+     spec). From here it is ordinary work.
+   - `not_yet` → node returns to waiting, **re-armed** against the next reassess-after completion
+     (see "Not looping forever"). A one-line reason is posted to the thread.
+   - `escalate` → node goes to `awaiting_human_response` for the human reviewer to decide.
+
+This keeps the human as the **reviewer/backstop** for v1 — the judge only decides the clear
+cases and escalates the rest — and leaves a clean path to offload more of that review to the
+judge as confidence grows (widen what counts as an autonomous `proceed`, narrow `escalate`).
+
+Chosen **for the reviewer's stated direction over leanness**: it is more machinery than deferral,
+but the machinery is where the harness earns its long-term value — an automated, bigger-picture
+judgment — and it is contained to a new board status plus a disposable session, touching no
+supervisor logic.
 
 ## Not looping forever
 
-The human review flagged the termination question, and it matters most for the v2 judge path, so
-name the guards now so v2 inherits them rather than rediscovering them:
+The spec review flagged termination, and it is the sharpest question for an automated judge. The
+reassess-after trigger is itself the primary guard, backed by three more:
 
-- **Idle/empty is a stop, not a spin.** The v1 loop already needs an idle-backoff when the
-  recommended set is empty (sibling `4f1d9719`). The judge pass is gated on *that same emptiness*:
-  it only runs when there is nothing recommended, and if it also yields no `yes`, the iteration
-  ends and the loop backs off. It never busy-loops re-judging.
-- **Judge each candidate at most once per settlement.** A `no` verdict must be cached against the
-  blocker's current state (e.g. the blocker's last-updated timestamp / thread length). Re-judging
-  the same candidate is only allowed after the blocker has actually changed. Without this, an
-  empty recommended set would re-spawn the same judge sessions every backoff tick — burning spend
-  to reach the same `no`.
-- **A judge `yes` must make progress, and a claim enforces it.** A promoted node is claimed and
-  run like any other; its outcome (completed / asked-the-user / errored) moves it out of the
-  soft-blocked bucket exactly as the recommended-set path does. It cannot be picked, deferred, and
-  re-picked in a tight cycle, because the claim and the outcome-handling already prevent that for
-  every node.
-- **The judge reads, it does not act.** A judge session only returns a verdict; it never claims,
-  edits, or posts. That keeps its cost bounded and its failure mode safe — a judge crash or a
-  malformed verdict is treated as `no` (skip), never as a retry storm.
+- **Event-driven, never polled.** A judge runs only when a reassess-after set *transitions* to
+  fully `done` — a discrete event, not an every-tick check. An idle loop with no completions
+  spawns zero judges.
+- **One judge per settlement.** A `not_yet` verdict re-arms the node against the *next*
+  reassess-after completion, not an immediate re-judge. The node cannot be re-evaluated until
+  something in its trigger set actually changes again, so an empty board never re-spawns the same
+  judge to reach the same `not_yet`.
+- **Escalation is a terminator, not a retry.** A judge that is unsure returns `escalate`, which
+  hands to a human (`awaiting_human_response`) — it does not loop. A judge crash or malformed
+  verdict is treated as `escalate` (or `not_yet` + re-arm), never as an automatic retry storm.
+- **A `proceed` must make progress, enforced by the claim.** A promoted node is claimed and run
+  like any other; its outcome moves it out of the soft-blocked bucket exactly as the
+  recommended-set path does. It cannot be promoted, dropped, and re-promoted in a tight cycle,
+  because the claim and outcome-handling already prevent that for every node.
 
 ## Handoff notes
 
-- **To `c312861e` (deterministic supervisor loop):** build v1 against the recommended set only —
-  do **not** implement soft-block handling. Leave the selection input as `aj tasks --json`'s
-  recommended set. The one forward-looking hook to preserve: keep task selection a distinct step
-  from runner invocation, so a v2 judge pass can be inserted between them without reshaping the
-  loop.
-- **To `4f1d9719` (rate-limit / idle-backoff):** the v2 judge pass is gated on the same
-  "recommended set empty" condition your backoff triggers on. When you define that idle
-  condition, make it queryable/reusable so the future judge pass can hang off it rather than
-  re-deriving emptiness.
-- **When to revisit:** promote (b) from v2 to built once the loop is running and we observe
-  soft-blocked nodes materially starving for human attention. Until there's that evidence, the
-  judge session is unbuilt on purpose.
+- **To AgentJira (the board itself):** this decision asks for two additions — a
+  `evaluating_soft_block` status (agent turn, sitting between a soft-blocked node's waiting state
+  and `ready_for_pickup`, with `not_yet`→waiting and `escalate`→`awaiting_human_response`
+  transitions), and a **reassess-after** field on soft-blocked nodes (default: the soft-block
+  blocker(s); overridable to an explicit node set). The reassess-after → `evaluating_soft_block`
+  transition fires when the set is fully `done`. Both are board-side; neither touches the loop.
+- **To `c312861e` (deterministic supervisor loop):** build v1 against the recommended set only.
+  The one forward-looking requirement: treat `evaluating_soft_block` as an agent-turn status that
+  dispatches a **judge** session type (read-only, returns a structured verdict) instead of the
+  runner. Keep task selection a distinct step from session dispatch so this second session type
+  slots in without reshaping the loop. The supervisor still only reads a list and dispatches
+  disposable sessions — it never reads or applies the verdict; AgentJira does.
+- **To `4f1d9719` (rate-limit / idle-backoff):** judge sessions are ordinary sessions and count
+  against the same spend/rate budget — include `evaluating_soft_block` dispatches in whatever
+  concurrency and backoff accounting you define. There is no separate judge poll to bound; the
+  reassess-after event is the only thing that creates judge work.
+- **When to revisit:** once the judge is running, tune the `proceed` / `escalate` boundary from
+  observed outcomes — the intended trajectory is to widen autonomous `proceed` and shrink
+  `escalate` as the judge proves reliable, moving more of the reviewer's load off the human.
