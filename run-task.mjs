@@ -1,61 +1,17 @@
 #!/usr/bin/env node
-// run-task <node-id>
-//
-// Spawn ONE fresh headless auto-mode Claude Code session (AgentJira plugin +
-// authenticated `aj` CLI preconfigured) against a single AgentJira node, run it
-// to completion, and classify how it finished:
-//
-//   completed  — session exited cleanly; node is in a non-error state
-//                (pr_raised / spec_review / split_proposed / broken_down / done / …)
-//   asked_user — session exited cleanly; node is now awaiting_human_response
-//                (the plugin question flow handed it back to a human)
-//   errored    — session crashed / non-zero exit / usage-limit or API error /
-//                no clean finish
-//
-// Every run is a brand-new process with fresh context: no --continue/--resume,
-// no session persisted, no state carried between runs.
-//
-// Output contract (consumed by the deterministic supervisor, sibling c312861e):
-//   * exactly one JSON object on stdout: { "node_id", "outcome", "detail" }
-//   * a distinct process exit code per outcome (see EXIT_CODES below)
-// All diagnostics and the child session's own output go to stderr, so stdout
-// stays machine-parseable.
 
 import { spawn } from "node:child_process";
-
-// ---- Outcome ⇄ exit-code mapping -------------------------------------------
 
 const EXIT_CODES = {
   completed: 0,
   asked_user: 10,
   errored: 20,
 };
-const USAGE_EXIT = 2; // bad invocation (not a run outcome)
+const USAGE_EXIT = 2;
 
-// Node status that deterministically means "handed back to a human by the
-// plugin question flow".
 const ASKED_USER_STATUS = "awaiting_human_response";
 
-// ---- Config (auth + binaries are preconditions, not this node's job) --------
-
-const config = {
-  claudeBin: process.env.CLAUDE_BIN || "claude",
-  ajBin: process.env.AJ_BIN || "aj",
-  // If set, the AgentJira plugin is explicitly loaded for the session from this
-  // directory. If unset, the session relies on the plugin already being
-  // installed for the user.
-  pluginDir: process.env.AGENTJIRA_PLUGIN_DIR || "",
-  // Optional model override (alias like "opus"/"sonnet" or a full model name).
-  model: process.env.RUN_TASK_MODEL || "",
-  // Optional wall-clock cap; on timeout the session is killed and the run is
-  // classified as errored. 0 = no timeout.
-  timeoutMs: Number(process.env.RUN_TASK_TIMEOUT_MS || 0),
-};
-
-// ---- Helpers ----------------------------------------------------------------
-
 function emitAndExit(nodeId, outcome, detail) {
-  // The ONLY thing written to stdout: the machine-readable outcome.
   process.stdout.write(
     JSON.stringify({ node_id: nodeId, outcome, detail }) + "\n"
   );
@@ -63,7 +19,6 @@ function emitAndExit(nodeId, outcome, detail) {
 }
 
 function log(...args) {
-  // Everything human-facing goes to stderr to keep stdout clean.
   process.stderr.write("[run-task] " + args.join(" ") + "\n");
 }
 
@@ -84,32 +39,17 @@ function buildPrompt(nodeId) {
   ].join("\n");
 }
 
-function buildClaudeArgs(nodeId) {
-  const args = [
-    "--print", // non-interactive: print result and exit
-    "--permission-mode", "auto", // auto mode enforced
-    "--no-session-persistence", // stateless: nothing to resume; fresh every run
-    "--output-format", "json", // structured result → detect is_error
+function buildClaudeArgs() {
+  return [
+    "--print",
+    "--permission-mode", "auto",
+    "--no-session-persistence",
+    "--output-format", "json",
   ];
-  if (config.pluginDir) {
-    args.push("--plugin-dir", config.pluginDir); // load AgentJira plugin
-  }
-  if (config.model) {
-    args.push("--model", config.model);
-  }
-  // NOTE: the prompt is deliberately NOT appended here — it is written to the
-  // session's stdin in runSession. A multi-line prompt cannot survive as a CLI
-  // argument once we have to launch through a shell on Windows (see spawnTool).
-  return args;
 }
 
-// On Windows, `claude` and `aj` are installed as `.cmd` shims, which Node
-// (since CVE-2024-27980) refuses to launch without a shell — a plain
-// spawn("aj", …) fails with ENOENT. So on Windows we spawn through a shell and
-// quote each argument (cmd.exe re-parses the command line). Multi-line values
-// (i.e. the prompt) can't be passed as a shell argument at all — they get
-// truncated at the first newline — so runSession feeds the prompt over stdin.
 const IS_WINDOWS = process.platform === "win32";
+
 function spawnTool(bin, args, stdio) {
   const finalArgs = IS_WINDOWS
     ? args.map((a) => (/[\s"&|<>^()%!]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a))
@@ -117,65 +57,42 @@ function spawnTool(bin, args, stdio) {
   return spawn(bin, finalArgs, { stdio, shell: IS_WINDOWS });
 }
 
-// Run the fresh headless session to completion. Resolves with the exit code,
-// a timed-out flag, and whether the session's own JSON result marked an error.
 function runSession(nodeId) {
   return new Promise((resolve) => {
-    const args = buildClaudeArgs(nodeId);
-    log(`spawning: ${config.claudeBin} ${args.join(" ")} <prompt via stdin>`);
+    const args = buildClaudeArgs();
+    log(`spawning: claude ${args.join(" ")} <prompt via stdin>`);
 
-    // stdin is piped so the prompt goes to `claude --print` over stdin rather
-    // than as a CLI argument (shell-safe on Windows; see spawnTool).
-    const child = spawnTool(config.claudeBin, args, ["pipe", "pipe", "pipe"]);
-    child.stdin.on("error", () => {}); // ignore EPIPE if the session exits early
+    const child = spawnTool("claude", args, ["pipe", "pipe", "pipe"]);
+    child.stdin.on("error", () => {});
     child.stdin.write(buildPrompt(nodeId));
     child.stdin.end();
 
     let stdout = "";
-    let timedOut = false;
-
     child.stdout.on("data", (d) => {
       stdout += d;
-      process.stderr.write(d); // mirror session output to stderr for observability
+      process.stderr.write(d);
     });
     child.stderr.on("data", (d) => process.stderr.write(d));
 
-    let timer = null;
-    if (config.timeoutMs > 0) {
-      timer = setTimeout(() => {
-        timedOut = true;
-        log(`timeout after ${config.timeoutMs}ms — killing session`);
-        child.kill("SIGKILL");
-      }, config.timeoutMs);
-    }
-
     child.on("error", (err) => {
-      if (timer) clearTimeout(timer);
       log(`failed to spawn session: ${err.message}`);
-      resolve({ exitCode: null, timedOut, sessionIsError: true, spawnError: err.message });
+      resolve({ exitCode: null, sessionIsError: true });
     });
 
-    child.on("close", (code, signal) => {
-      if (timer) clearTimeout(timer);
-      // The session's JSON result may flag an error (max turns, API error, …)
-      // even when the process exits 0.
+    child.on("close", (code) => {
       let sessionIsError = false;
       try {
         const result = JSON.parse(stdout);
         if (result && result.is_error === true) sessionIsError = true;
-      } catch {
-        // Non-JSON stdout (e.g. crash before producing a result) — the exit
-        // code below governs the classification.
-      }
-      resolve({ exitCode: code, signal, timedOut, sessionIsError });
+      } catch {}
+      resolve({ exitCode: code, sessionIsError });
     });
   });
 }
 
-// Read the node's current status via the authenticated aj CLI.
 function queryNodeStatus(nodeId) {
   return new Promise((resolve) => {
-    const child = spawnTool(config.ajBin, ["context", nodeId, "--json"], [
+    const child = spawnTool("aj", ["context", nodeId, "--json"], [
       "ignore",
       "pipe",
       "pipe",
@@ -194,11 +111,7 @@ function queryNodeStatus(nodeId) {
   });
 }
 
-// Deterministic classification from the process result + post-run node status.
-function classify({ exitCode, timedOut, sessionIsError }, postStatus) {
-  if (timedOut) {
-    return { outcome: "errored", detail: "session timed out" };
-  }
+function classify({ exitCode, sessionIsError }, postStatus) {
   if (exitCode !== 0 || sessionIsError) {
     return {
       outcome: "errored",
@@ -206,7 +119,6 @@ function classify({ exitCode, timedOut, sessionIsError }, postStatus) {
     };
   }
   if (postStatus == null) {
-    // Clean process exit but we cannot confirm the node state → not a clean finish.
     return { outcome: "errored", detail: "clean exit but node status lookup failed" };
   }
   if (postStatus === ASKED_USER_STATUS) {
@@ -214,8 +126,6 @@ function classify({ exitCode, timedOut, sessionIsError }, postStatus) {
   }
   return { outcome: "completed", detail: `node status=${postStatus}` };
 }
-
-// ---- Main -------------------------------------------------------------------
 
 async function main() {
   const argv = process.argv.slice(2);
@@ -232,13 +142,6 @@ async function main() {
         "  completed  (exit 0)",
         "  asked_user (exit 10)",
         "  errored    (exit 20)",
-        "",
-        "Environment:",
-        "  CLAUDE_BIN            claude binary (default: claude)",
-        "  AJ_BIN               aj binary (default: aj)",
-        "  AGENTJIRA_PLUGIN_DIR path to the AgentJira plugin to load (optional)",
-        "  RUN_TASK_MODEL       model alias/name override (optional)",
-        "  RUN_TASK_TIMEOUT_MS  wall-clock cap; timeout → errored (optional)",
         "",
       ].join("\n") + "\n"
     );
@@ -257,7 +160,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  // Any unexpected failure in the runner itself is an errored run.
   const nodeId = process.argv[2] || null;
   emitAndExit(nodeId, "errored", `runner error: ${err.message}`);
 });

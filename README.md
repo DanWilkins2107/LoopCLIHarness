@@ -25,8 +25,7 @@ Auth is a **precondition**, not the runner's job (local dev is fine for v1):
 
 - [`claude`](https://docs.claude.com/en/docs/claude-code) on `PATH` and authenticated.
 - The `aj` CLI on `PATH` and authenticated (`aj whoami` works).
-- The AgentJira plugin available to the session — either already installed for
-  the user, or pointed at via `AGENTJIRA_PLUGIN_DIR` (see below).
+- The AgentJira plugin already installed for the session.
 - Node.js >= 18.
 
 ### Usage
@@ -61,13 +60,3 @@ session's own output go to stderr):
 Classification is deterministic: it combines the session process exit status
 (plus the session's own `is_error` flag) with the node's post-run status queried
 via `aj context <node> --json`.
-
-### Configuration (env)
-
-| var                   | default  | purpose                                              |
-| --------------------- | -------- | ---------------------------------------------------- |
-| `CLAUDE_BIN`          | `claude` | Claude Code binary to spawn                          |
-| `AJ_BIN`              | `aj`     | `aj` binary for the post-run status query            |
-| `AGENTJIRA_PLUGIN_DIR`| (unset)  | if set, load the AgentJira plugin from this path     |
-| `RUN_TASK_MODEL`      | (unset)  | model alias/name override passed to `claude --model` |
-| `RUN_TASK_TIMEOUT_MS` | `0`      | wall-clock cap; on timeout the session is killed and the run is `errored` |
