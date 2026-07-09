@@ -1,0 +1,16 @@
+{
+  "name": "loopcliharness",
+  "version": "0.1.0",
+  "description": "Harness that loops headless Claude Code sessions to work AgentJira tasks.",
+  "type": "module",
+  "bin": {
+    "run-task": "run-task.mjs"
+  },
+  "scripts": {
+    "run-task": "node run-task.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED"
+}
