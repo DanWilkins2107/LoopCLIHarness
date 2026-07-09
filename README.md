@@ -28,6 +28,12 @@ Auth is a **precondition**, not the runner's job (local dev is fine for v1):
 - The AgentJira plugin already installed for the session.
 - Node.js >= 18.
 
+Before spawning a session, the runner does a fast preflight (`aj whoami`) to
+confirm `aj` is on `PATH` and authenticated — via env vars (`AGENTJIRA_URL`,
+`AGENTJIRA_ANON_KEY`, `AGENTJIRA_EMAIL`, `AGENTJIRA_PASSWORD`) **or**
+`~/.agentjira/config.json`, whichever the environment provides. If that fails it
+exits `errored` immediately rather than spending a session.
+
 ### Usage
 
 ```bash

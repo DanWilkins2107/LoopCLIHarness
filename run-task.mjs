@@ -90,6 +90,34 @@ function runSession(nodeId) {
   });
 }
 
+function preflight() {
+  return new Promise((resolve) => {
+    const child = spawnTool("aj", ["whoami", "--json"], ["ignore", "pipe", "pipe"]);
+    let out = "";
+    let err = "";
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (err += d));
+    child.on("error", (e) =>
+      resolve({ ok: false, detail: `\`aj\` not runnable: ${e.message}` })
+    );
+    child.on("close", (code) => {
+      if (code !== 0) {
+        resolve({
+          ok: false,
+          detail: `\`aj\` not authenticated (whoami exit=${code}): ${err.trim() || "no auth resolved from env vars or ~/.agentjira/config.json"}`,
+        });
+        return;
+      }
+      try {
+        JSON.parse(out);
+        resolve({ ok: true });
+      } catch {
+        resolve({ ok: false, detail: "`aj whoami` returned unparseable output" });
+      }
+    });
+  });
+}
+
 function queryNodeStatus(nodeId) {
   return new Promise((resolve) => {
     const child = spawnTool("aj", ["context", nodeId, "--json"], [
@@ -150,6 +178,12 @@ async function main() {
 
   const nodeId = argv[0];
   log(`running node ${nodeId}`);
+
+  const pre = await preflight();
+  if (!pre.ok) {
+    log(`preflight failed: ${pre.detail}`);
+    emitAndExit(nodeId, "errored", `preflight: ${pre.detail}`);
+  }
 
   const result = await runSession(nodeId);
   const postStatus = await queryNodeStatus(nodeId);
