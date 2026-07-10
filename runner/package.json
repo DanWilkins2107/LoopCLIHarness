@@ -4,9 +4,6 @@
   "private": true,
   "description": "Single-session runner: runs one AgentJira node in one fresh headless Claude Code session.",
   "type": "module",
-  "bin": {
-    "run-task": "run-task.ts"
-  },
   "scripts": {
     "start": "tsx run-task.ts",
     "typecheck": "tsc --noEmit"

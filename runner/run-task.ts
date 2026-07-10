@@ -1,4 +1,4 @@
-import { spawn, type StdioOptions } from "node:child_process";
+import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
 
 type Outcome = "completed" | "asked_user" | "errored";
 
@@ -39,14 +39,12 @@ function buildPrompt(nodeId: string): string {
   ].join("\n");
 }
 
-function buildClaudeArgs(): string[] {
-  return [
-    "--print",
-    "--permission-mode", "auto",
-    "--no-session-persistence",
-    "--output-format", "json",
-  ];
-}
+const CLAUDE_ARGS = [
+  "--print",
+  "--permission-mode", "auto",
+  "--no-session-persistence",
+  "--output-format", "json",
+];
 
 const IS_WINDOWS = process.platform === "win32";
 
@@ -61,22 +59,32 @@ function spawnTool(bin: string, args: string[], stdio: StdioOptions) {
   return spawn(bin, finalArgs, { stdio, shell: IS_WINDOWS });
 }
 
+function wireSessionOutput(child: ChildProcess): () => string {
+  let stdout = "";
+  child.stdout?.on("data", (d) => {
+    stdout += d;
+    process.stderr.write(d);
+  });
+  child.stderr?.on("data", (d) => process.stderr.write(d));
+  return () => stdout;
+}
+
+function sessionReportedError(stdout: string): boolean {
+  try {
+    return JSON.parse(stdout)?.is_error === true;
+  } catch {
+    return false;
+  }
+}
+
 function runSession(nodeId: string): Promise<{ exitCode: number | null; sessionIsError: boolean }> {
   return new Promise((resolve) => {
-    const args = buildClaudeArgs();
-    log(`spawning: claude ${args.join(" ")} <prompt via stdin>`);
-
-    const child = spawnTool("claude", args, ["pipe", "pipe", "pipe"]);
+    const child = spawnTool("claude", CLAUDE_ARGS, ["pipe", "pipe", "pipe"]);
     child.stdin?.on("error", () => {});
     child.stdin?.write(buildPrompt(nodeId));
     child.stdin?.end();
 
-    let stdout = "";
-    child.stdout?.on("data", (d) => {
-      stdout += d;
-      process.stderr.write(d);
-    });
-    child.stderr?.on("data", (d) => process.stderr.write(d));
+    const getStdout = wireSessionOutput(child);
 
     child.on("error", (err) => {
       log(`failed to spawn session: ${err.message}`);
@@ -84,12 +92,7 @@ function runSession(nodeId: string): Promise<{ exitCode: number | null; sessionI
     });
 
     child.on("close", (code) => {
-      let sessionIsError = false;
-      try {
-        const result = JSON.parse(stdout);
-        if (result && result.is_error === true) sessionIsError = true;
-      } catch {}
-      resolve({ exitCode: code, sessionIsError });
+      resolve({ exitCode: code, sessionIsError: sessionReportedError(getStdout()) });
     });
   });
 }
@@ -158,24 +161,28 @@ function classify(
   return { outcome: "completed", detail: `node status=${postStatus}` };
 }
 
+function printUsage(): void {
+  process.stderr.write(
+    [
+      "Usage: run-task <node-id>",
+      "",
+      "Runs one AgentJira node in one fresh headless auto-mode Claude Code",
+      "session and prints a machine-readable outcome to stdout:",
+      '  { "node_id", "outcome", "detail" }',
+      "",
+      "Outcomes and exit codes:",
+      "  completed  (exit 0)",
+      "  asked_user (exit 10)",
+      "  errored    (exit 20)",
+      "",
+    ].join("\n") + "\n"
+  );
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv.length === 0 || argv[0] === "-h" || argv[0] === "--help") {
-    process.stderr.write(
-      [
-        "Usage: run-task <node-id>",
-        "",
-        "Runs one AgentJira node in one fresh headless auto-mode Claude Code",
-        "session and prints a machine-readable outcome to stdout:",
-        '  { "node_id", "outcome", "detail" }',
-        "",
-        "Outcomes and exit codes:",
-        "  completed  (exit 0)",
-        "  asked_user (exit 10)",
-        "  errored    (exit 20)",
-        "",
-      ].join("\n") + "\n"
-    );
+    printUsage();
     process.exit(argv.length === 0 ? USAGE_EXIT : 0);
   }
 
