@@ -8,4 +8,12 @@ loops to the next task. Each session is a long-lived, stateful, interactive proc
 real filesystem and shell, so the harness treats sandboxing, hosting, and credential
 handling as first-class concerns.
 
-Design and decision docs live under [`docs/`](docs/).
+## Layout
+
+Each part of the harness lives in its own directory (monorepo-style, kept separate
+even while small):
+
+- [`runner/`](runner/) — `run-task`, the single-session runner: runs one AgentJira
+  node in one fresh headless Claude Code session and reports how it finished. See
+  [`runner/README.md`](runner/README.md).
+- [`docs/`](docs/) — design and decision docs.
