@@ -1,0 +1,19 @@
+{
+  "name": "@loopcliharness/supervisor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deterministic supervisor loop: repeatedly runs the first recommended AgentJira task via the single-session runner until none remain.",
+  "type": "module",
+  "scripts": {
+    "start": "tsx loop.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}
