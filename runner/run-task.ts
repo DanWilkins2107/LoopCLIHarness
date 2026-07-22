@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
-import { planSession, sandboxMode } from "./sandbox.js";
+import { parseSandboxEnv, planSession, type SandboxEnv } from "./sandbox.js";
 
 type Outcome = "completed" | "asked_user" | "errored";
 
@@ -78,17 +78,12 @@ function sessionReportedError(stdout: string): boolean {
   }
 }
 
-function runSession(nodeId: string): Promise<{ exitCode: number | null; sessionIsError: boolean }> {
-  // Confine the session in an unprivileged bwrap sandbox (Linux) so it never
-  // holds host-root and all egress is forced through the host proxy. `bin` is
-  // `bwrap` when sandboxed, else `claude` unchanged (non-Linux dev / opt-out).
-  const workdir = process.env.LOOP_SESSION_WORKDIR?.trim() || process.cwd();
-  const plan = planSession("claude", CLAUDE_ARGS, {
-    env: process.env,
-    platform: process.platform,
-    workdir,
-  });
-  log(plan.sandboxed ? `session sandboxed via bwrap (workdir=${workdir})` : "session NOT sandboxed (bwrap disabled/unavailable for this platform)");
+function runSession(nodeId: string, sandboxEnv: SandboxEnv): Promise<{ exitCode: number | null; sessionIsError: boolean }> {
+  // Every session runs inside an unprivileged bwrap namespace: it never holds
+  // host-root and all egress is forced through the host proxy. There is no
+  // unconfined path.
+  const plan = planSession("claude", CLAUDE_ARGS, { env: sandboxEnv });
+  log(`session sandboxed via bwrap (workdir=${sandboxEnv.LOOP_SESSION_WORKDIR})`);
   return new Promise((resolve) => {
     const child = spawnTool(plan.bin, plan.args, ["pipe", "pipe", "pipe"]);
     child.stdin?.on("error", () => {});
@@ -136,15 +131,10 @@ function preflight(): Promise<{ ok: true } | { ok: false; detail: string }> {
   });
 }
 
-// Verify the sandbox is actually available before running. When sandboxing is
-// on (Linux default, or forced via LOOP_SANDBOX) but `bwrap` is missing we fail
-// CLOSED — running unconfined would drop the "session never holds host-root"
-// precondition the whole egress model rests on. Set LOOP_SANDBOX=0 to opt out
-// deliberately (e.g. local dev on a box without bwrap).
+// `bwrap` must be present: a missing sandbox fails CLOSED, because running
+// unconfined would drop the "session never holds host-root" precondition the
+// whole egress model rests on.
 function sandboxPreflight(): Promise<{ ok: true } | { ok: false; detail: string }> {
-  if (sandboxMode(process.env, process.platform) === "off") {
-    return Promise.resolve({ ok: true });
-  }
   return new Promise((resolve) => {
     const child = spawnTool("bwrap", ["--version"], ["ignore", "ignore", "pipe"]);
     let err = "";
@@ -152,7 +142,7 @@ function sandboxPreflight(): Promise<{ ok: true } | { ok: false; detail: string 
     child.on("error", (e) =>
       resolve({
         ok: false,
-        detail: `sandboxing is on but \`bwrap\` is not runnable (${e.message}). Install bubblewrap, or set LOOP_SANDBOX=0 to run unconfined.`,
+        detail: `\`bwrap\` is not runnable (${e.message}). Install bubblewrap — sessions are never run unconfined.`,
       })
     );
     child.on("close", (code) =>
@@ -227,6 +217,12 @@ async function main(): Promise<void> {
   const nodeId = argv[0];
   log(`running node ${nodeId}`);
 
+  const sandboxEnv = parseSandboxEnv(process.env);
+  if (!sandboxEnv.ok) {
+    log(`env validation failed: ${sandboxEnv.detail}`);
+    emitAndExit(nodeId, "errored", `env: ${sandboxEnv.detail}`);
+  }
+
   const pre = await preflight();
   if (!pre.ok) {
     log(`preflight failed: ${pre.detail}`);
@@ -239,7 +235,7 @@ async function main(): Promise<void> {
     emitAndExit(nodeId, "errored", `sandbox: ${sandbox.detail}`);
   }
 
-  const result = await runSession(nodeId);
+  const result = await runSession(nodeId, sandboxEnv.env);
   const postStatus = await queryNodeStatus(nodeId);
   const { outcome, detail } = classify(result, postStatus);
 
