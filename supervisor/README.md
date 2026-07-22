@@ -15,6 +15,7 @@ Same as the runner (auth is a precondition, not the loop's job):
   runner).
 - `tsx` available (the loop spawns `tsx ../runner/run-task.ts <node-id>`).
 - Node.js >= 18.
+- A POSIX environment (Linux runners / an Ubuntu container locally).
 
 ## Usage
 

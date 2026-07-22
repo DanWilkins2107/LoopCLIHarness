@@ -1,4 +1,4 @@
-import { spawn, type StdioOptions } from "node:child_process";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
@@ -21,19 +21,8 @@ const USAGE_EXIT = 2;
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RUNNER_ENTRY = resolve(HERE, "..", "runner", "run-task.ts");
 
-const IS_WINDOWS = process.platform === "win32";
-
 function log(...args: string[]): void {
   process.stderr.write("[supervisor] " + args.join(" ") + "\n");
-}
-
-// Mirror the runner's Windows-safe spawn: go through the shell so `.cmd` shims
-// (`tsx`, `aj`) resolve, quoting args that the second cmd.exe parse would break.
-function spawnTool(bin: string, args: string[], stdio: StdioOptions) {
-  const finalArgs = IS_WINDOWS
-    ? args.map((a) => (/[\s"&|<>^()%!]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a))
-    : args;
-  return spawn(bin, finalArgs, { stdio, shell: IS_WINDOWS });
 }
 
 interface RecommendedTask {
@@ -42,33 +31,30 @@ interface RecommendedTask {
   status?: string;
 }
 
-// Fetch the recommended task list fresh. Returns null on failure so the caller
-// can surface it and stop rather than spin.
-function fetchRecommended(projectId: string | null): Promise<RecommendedTask[] | null> {
+type Result<T> = { data: T; error: null } | { data: null; error: string };
+
+function fetchRecommended(projectId: string | null): Promise<Result<RecommendedTask[]>> {
   const args = ["tasks", "--json"];
   if (projectId) args.push("-p", projectId);
   return new Promise((resolvePromise) => {
-    const child = spawnTool("aj", args, ["ignore", "pipe", "pipe"]);
+    const child = spawn("aj", args, { stdio: ["ignore", "pipe", "pipe"] });
     let out = "";
     child.stdout?.on("data", (d) => (out += d));
     child.stderr?.on("data", (d) => process.stderr.write(d));
-    child.on("error", (e) => {
-      log(`\`aj tasks\` not runnable: ${e.message}`);
-      resolvePromise(null);
-    });
+    child.on("error", (e) =>
+      resolvePromise({ data: null, error: `\`aj tasks\` not runnable: ${e.message}` })
+    );
     child.on("close", (code) => {
       if (code !== 0) {
-        log(`\`aj tasks\` exited ${code}`);
-        resolvePromise(null);
+        resolvePromise({ data: null, error: `\`aj tasks\` exited ${code}` });
         return;
       }
       try {
         const parsed = JSON.parse(out);
         const rec = Array.isArray(parsed?.recommended) ? parsed.recommended : [];
-        resolvePromise(rec as RecommendedTask[]);
+        resolvePromise({ data: rec as RecommendedTask[], error: null });
       } catch {
-        log("`aj tasks --json` returned unparseable output");
-        resolvePromise(null);
+        resolvePromise({ data: null, error: "`aj tasks --json` returned unparseable output" });
       }
     });
   });
@@ -95,7 +81,7 @@ function parseRunnerOutput(stdout: string): { outcome: Outcome; detail: string }
 // falling back to the exit code, then to `errored`.
 function runNode(nodeId: string): Promise<{ outcome: Outcome; detail: string }> {
   return new Promise((resolvePromise) => {
-    const child = spawnTool("tsx", [RUNNER_ENTRY, nodeId], ["ignore", "pipe", "pipe"]);
+    const child = spawn("tsx", [RUNNER_ENTRY, nodeId], { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     child.stdout?.on("data", (d) => (stdout += d));
     child.stderr?.on("data", (d) => process.stderr.write(d));
@@ -117,51 +103,23 @@ function runNode(nodeId: string): Promise<{ outcome: Outcome; detail: string }> 
   });
 }
 
-function printUsage(): void {
-  process.stderr.write(
-    [
-      "Usage: loop [--project <id>]",
-      "",
-      "Deterministic supervisor loop. Repeatedly:",
-      "  1. queries `aj tasks --json` fresh,",
-      "  2. picks the first `recommended` task not yet attempted this run,",
-      "  3. runs it in one fresh single-session runner process,",
-      "  4. acts on the outcome (completed -> next, asked_user -> leave with the",
-      "     human, errored -> surface, no retry).",
-      "",
-      "Terminates when no unattempted recommended task remains: prints a JSON",
-      "summary to stdout and exits 0. No LLM, no polling.",
-      "",
-      "  --project <id>   pass through to `aj tasks -p <id>`",
-      "",
-    ].join("\n") + "\n"
-  );
-}
+const USAGE = "Usage: loop [--project <id>]";
 
-function parseArgs(argv: string[]): { projectId: string | null } {
-  let projectId: string | null = null;
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--project" || a === "-p") {
-      projectId = argv[++i] ?? null;
-      if (!projectId) {
-        process.stderr.write("error: --project requires an argument\n");
-        process.exit(USAGE_EXIT);
-      }
-    } else if (a === "-h" || a === "--help") {
-      printUsage();
-      process.exit(0);
-    } else {
-      process.stderr.write(`error: unexpected argument: ${a}\n`);
-      printUsage();
-      process.exit(USAGE_EXIT);
-    }
+function parseProjectArg(argv: string[]): string | null {
+  if (argv[0] === "-h" || argv[0] === "--help") {
+    process.stderr.write(USAGE + "\n");
+    process.exit(0);
   }
-  return { projectId };
+  if (argv.length === 0) return null;
+  if ((argv[0] === "--project" || argv[0] === "-p") && argv[1] && argv.length === 2) {
+    return argv[1];
+  }
+  process.stderr.write(USAGE + "\n");
+  process.exit(USAGE_EXIT);
 }
 
 async function main(): Promise<void> {
-  const { projectId } = parseArgs(process.argv.slice(2));
+  const projectId = parseProjectArg(process.argv.slice(2));
 
   const attempted = new Set<string>();
   const counts: Record<Outcome, number> = { completed: 0, asked_user: 0, errored: 0 };
@@ -170,10 +128,10 @@ async function main(): Promise<void> {
   log(`starting${projectId ? ` (project ${projectId})` : ""}`);
 
   for (;;) {
-    const recommended = await fetchRecommended(projectId);
-    if (recommended === null) {
+    const { data: recommended, error } = await fetchRecommended(projectId);
+    if (error !== null) {
       // Can't see the board — surface and stop rather than spin blindly.
-      log("aborting: could not read recommended tasks");
+      log(`aborting: ${error}`);
       break;
     }
 
