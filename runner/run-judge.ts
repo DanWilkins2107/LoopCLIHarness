@@ -1,4 +1,5 @@
-import { spawnTool, wireSessionOutput, sessionReportedError } from "./session.js";
+import { spawnTool, wireSessionOutput, sessionReportedError } from "./session";
+import { CLAUDE_ARGS, USAGE_EXIT, makeLog, emitResult, preflight } from "./entrypoint";
 
 // Per-node soft-block judge: reads one node and prints one verdict JSON.
 // Never `proceed` on doubt — every non-`proceed` path resolves to `not_yet`.
@@ -9,18 +10,12 @@ const EXIT_CODES: Record<Verdict, number> = {
   proceed: 0,
   not_yet: 10,
 };
-const USAGE_EXIT = 2;
 
 function emitAndExit(nodeId: string | null, verdict: Verdict, reason: string): never {
-  process.stdout.write(
-    JSON.stringify({ node_id: nodeId, verdict, reason }) + "\n"
-  );
-  process.exit(EXIT_CODES[verdict]);
+  emitResult(nodeId, EXIT_CODES[verdict], { verdict, reason });
 }
 
-function log(...args: string[]): void {
-  process.stderr.write("[run-judge] " + args.join(" ") + "\n");
-}
+const log = makeLog("run-judge");
 
 function buildPrompt(nodeId: string): string {
   return [
@@ -52,13 +47,6 @@ function buildPrompt(nodeId: string): string {
     `The reason must be a single short line. Do not wrap it in code fences.`,
   ].join("\n");
 }
-
-const CLAUDE_ARGS = [
-  "--print",
-  "--permission-mode", "auto",
-  "--no-session-persistence",
-  "--output-format", "json",
-];
 
 function runSession(nodeId: string): Promise<{ exitCode: number | null; sessionIsError: boolean; stdout: string }> {
   return new Promise((resolve) => {
@@ -111,34 +99,6 @@ function extractVerdict(text: string): { verdict: Verdict; reason: string } | nu
     }
   }
   return null;
-}
-
-function preflight(): Promise<{ ok: true } | { ok: false; detail: string }> {
-  return new Promise((resolve) => {
-    const child = spawnTool("aj", ["whoami", "--json"], ["ignore", "pipe", "pipe"]);
-    let out = "";
-    let err = "";
-    child.stdout?.on("data", (d) => (out += d));
-    child.stderr?.on("data", (d) => (err += d));
-    child.on("error", (e) =>
-      resolve({ ok: false, detail: `\`aj\` not runnable: ${e.message}` })
-    );
-    child.on("close", (code) => {
-      if (code !== 0) {
-        resolve({
-          ok: false,
-          detail: `\`aj\` not authenticated (whoami exit=${code}): ${err.trim() || "no auth resolved from env vars or ~/.agentjira/config.json"}`,
-        });
-        return;
-      }
-      try {
-        JSON.parse(out);
-        resolve({ ok: true });
-      } catch {
-        resolve({ ok: false, detail: "`aj whoami` returned unparseable output" });
-      }
-    });
-  });
 }
 
 function printUsage(): void {
