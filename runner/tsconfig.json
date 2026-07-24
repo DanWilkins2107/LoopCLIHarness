@@ -11,5 +11,5 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["run-task.ts", "run-judge.ts", "session.ts"]
+  "include": ["run-task.ts", "run-judge.ts", "session.ts", "classify.ts"]
 }
