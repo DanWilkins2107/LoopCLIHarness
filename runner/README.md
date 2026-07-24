@@ -23,6 +23,19 @@ npx tsx run-task.ts <node-id>   # or: npm start -- <node-id>
 
 Type-check with `npm run typecheck`.
 
+## Per-session sandbox (bubblewrap)
+
+Every session runs inside an unprivileged [`bwrap`](https://github.com/containers/bubblewrap)
+user namespace (posture layers 3–4 of `docs/sandboxing/network-isolation.md`).
+There is no unconfined path: a missing `bwrap` fails closed. See `sandbox.ts`
+for the confinement itself.
+
+Required env (validated before any session spawns):
+
+- `LOOP_SESSION_PROXY` — proxy URL all session egress is forced through.
+- `LOOP_SESSION_WORKDIR` — the session's writable workdir.
+- `NO_PROXY` (optional) — hosts that bypass the proxy.
+
 ## Output contract
 
 stdout carries exactly one JSON object —

@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
+import { parseSandboxEnv, buildBwrapArgs, type SandboxEnv } from "./sandbox.js";
 
 type Outcome = "completed" | "asked_user" | "errored";
 
@@ -77,9 +78,11 @@ function sessionReportedError(stdout: string): boolean {
   }
 }
 
-function runSession(nodeId: string): Promise<{ exitCode: number | null; sessionIsError: boolean }> {
+function runSession(nodeId: string, sandboxEnv: SandboxEnv): Promise<{ exitCode: number | null; sessionIsError: boolean }> {
+  const bwrapArgs = buildBwrapArgs("claude", CLAUDE_ARGS, { env: sandboxEnv });
+  log(`session sandboxed via bwrap (workdir=${sandboxEnv.LOOP_SESSION_WORKDIR})`);
   return new Promise((resolve) => {
-    const child = spawnTool("claude", CLAUDE_ARGS, ["pipe", "pipe", "pipe"]);
+    const child = spawnTool("bwrap", bwrapArgs, ["pipe", "pipe", "pipe"]);
     child.stdin?.on("error", () => {});
     child.stdin?.write(buildPrompt(nodeId));
     child.stdin?.end();
@@ -122,6 +125,25 @@ function preflight(): Promise<{ ok: true } | { ok: false; detail: string }> {
         resolve({ ok: false, detail: "`aj whoami` returned unparseable output" });
       }
     });
+  });
+}
+
+function sandboxPreflight(): Promise<{ ok: true } | { ok: false; detail: string }> {
+  return new Promise((resolve) => {
+    const child = spawnTool("bwrap", ["--version"], ["ignore", "ignore", "pipe"]);
+    let err = "";
+    child.stderr?.on("data", (d) => (err += d));
+    child.on("error", (e) =>
+      resolve({
+        ok: false,
+        detail: `\`bwrap\` is not runnable (${e.message}). Install bubblewrap — sessions are never run unconfined.`,
+      })
+    );
+    child.on("close", (code) =>
+      code === 0
+        ? resolve({ ok: true })
+        : resolve({ ok: false, detail: `\`bwrap --version\` exit=${code}: ${err.trim()}` })
+    );
   });
 }
 
@@ -189,13 +211,25 @@ async function main(): Promise<void> {
   const nodeId = argv[0];
   log(`running node ${nodeId}`);
 
+  const sandboxEnv = parseSandboxEnv(process.env);
+  if (!sandboxEnv.ok) {
+    log(`env validation failed: ${sandboxEnv.detail}`);
+    emitAndExit(nodeId, "errored", `env: ${sandboxEnv.detail}`);
+  }
+
   const pre = await preflight();
   if (!pre.ok) {
     log(`preflight failed: ${pre.detail}`);
     emitAndExit(nodeId, "errored", `preflight: ${pre.detail}`);
   }
 
-  const result = await runSession(nodeId);
+  const sandbox = await sandboxPreflight();
+  if (!sandbox.ok) {
+    log(`sandbox preflight failed: ${sandbox.detail}`);
+    emitAndExit(nodeId, "errored", `sandbox: ${sandbox.detail}`);
+  }
+
+  const result = await runSession(nodeId, sandboxEnv.env);
   const postStatus = await queryNodeStatus(nodeId);
   const { outcome, detail } = classify(result, postStatus);
 
