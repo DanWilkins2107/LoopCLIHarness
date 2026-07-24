@@ -1,5 +1,6 @@
 import { spawnTool, wireSessionOutput, sessionReportedError } from "./session.js";
 import { parseSandboxEnv, buildBwrapArgs, type SandboxEnv } from "./sandbox.js";
+import { CLAUDE_ARGS, USAGE_EXIT, makeLog, emitResult, preflight } from "./entrypoint.js";
 
 type Outcome = "completed" | "asked_user" | "errored";
 
@@ -8,20 +9,14 @@ const EXIT_CODES: Record<Outcome, number> = {
   asked_user: 10,
   errored: 20,
 };
-const USAGE_EXIT = 2;
 
 const ASKED_USER_STATUS = "awaiting_human_response";
 
 function emitAndExit(nodeId: string | null, outcome: Outcome, detail: string): never {
-  process.stdout.write(
-    JSON.stringify({ node_id: nodeId, outcome, detail }) + "\n"
-  );
-  process.exit(EXIT_CODES[outcome]);
+  emitResult(nodeId, EXIT_CODES[outcome], { outcome, detail });
 }
 
-function log(...args: string[]): void {
-  process.stderr.write("[run-task] " + args.join(" ") + "\n");
-}
+const log = makeLog("run-task");
 
 function buildPrompt(nodeId: string): string {
   return [
@@ -39,13 +34,6 @@ function buildPrompt(nodeId: string): string {
     `finishing the stage, run \`aj unclaim ${nodeId}\`.`,
   ].join("\n");
 }
-
-const CLAUDE_ARGS = [
-  "--print",
-  "--permission-mode", "auto",
-  "--no-session-persistence",
-  "--output-format", "json",
-];
 
 function runSession(nodeId: string, sandboxEnv: SandboxEnv): Promise<{ exitCode: number | null; sessionIsError: boolean }> {
   const bwrapArgs = buildBwrapArgs("claude", CLAUDE_ARGS, { env: sandboxEnv });
@@ -65,34 +53,6 @@ function runSession(nodeId: string, sandboxEnv: SandboxEnv): Promise<{ exitCode:
 
     child.on("close", (code) => {
       resolve({ exitCode: code, sessionIsError: sessionReportedError(getStdout()) });
-    });
-  });
-}
-
-function preflight(): Promise<{ ok: true } | { ok: false; detail: string }> {
-  return new Promise((resolve) => {
-    const child = spawnTool("aj", ["whoami", "--json"], ["ignore", "pipe", "pipe"]);
-    let out = "";
-    let err = "";
-    child.stdout?.on("data", (d) => (out += d));
-    child.stderr?.on("data", (d) => (err += d));
-    child.on("error", (e) =>
-      resolve({ ok: false, detail: `\`aj\` not runnable: ${e.message}` })
-    );
-    child.on("close", (code) => {
-      if (code !== 0) {
-        resolve({
-          ok: false,
-          detail: `\`aj\` not authenticated (whoami exit=${code}): ${err.trim() || "no auth resolved from env vars or ~/.agentjira/config.json"}`,
-        });
-        return;
-      }
-      try {
-        JSON.parse(out);
-        resolve({ ok: true });
-      } catch {
-        resolve({ ok: false, detail: "`aj whoami` returned unparseable output" });
-      }
     });
   });
 }
