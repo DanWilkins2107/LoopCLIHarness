@@ -16,4 +16,7 @@ even while small):
 - [`runner/`](runner/) — `run-task`, the single-session runner: runs one AgentJira
   node in one fresh headless Claude Code session and reports how it finished. See
   [`runner/README.md`](runner/README.md).
+- [`supervisor/`](supervisor/) — `loop`, the deterministic supervisor: repeatedly
+  runs the first recommended AgentJira task via the runner until none remain. No
+  LLM, no accumulating context. See [`supervisor/README.md`](supervisor/README.md).
 - [`docs/`](docs/) — design and decision docs.
