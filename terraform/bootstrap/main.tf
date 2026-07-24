@@ -24,6 +24,27 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "state" {
   }
 }
 
+resource "aws_s3_bucket_lifecycle_configuration" "state" {
+  bucket = aws_s3_bucket.state.id
+
+  rule {
+    id     = "expire-noncurrent-state"
+    status = "Enabled"
+
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = 90
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.state]
+}
+
 resource "aws_s3_bucket_public_access_block" "state" {
   bucket = aws_s3_bucket.state.id
 
@@ -42,7 +63,8 @@ resource "aws_s3_bucket_ownership_controls" "state" {
 }
 
 resource "aws_dynamodb_table" "lock" {
-  name         = "${var.name_prefix}-tflock"
+  name = "${var.name_prefix}-tflock"
+  # PAY_PER_REQUEST, not the PROVISIONED default: lock table traffic is tiny and bursty, no capacity to plan or pay idle for
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "LockID"
 
