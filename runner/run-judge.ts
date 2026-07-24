@@ -1,23 +1,7 @@
 import { spawnTool, wireSessionOutput, sessionReportedError } from "./session.js";
 
-// Read-only, per-node "soft-block judge" session + its runner-variant.
-//
-// Given ONE node id that the board has already moved into
-// `evaluating_soft_block`, spawn a fresh headless Claude session that reads the
-// node, its settled `reassess_after` set, and enough surrounding graph, then
-// judges whether the blocker's shared decisions are settled enough that pickup
-// isn't a guess. The session is constrained READ-ONLY — it cannot claim, edit,
-// or post to the board. It emits exactly one verdict JSON on stdout:
-//
-//   { "node_id", "verdict": "proceed" | "not_yet", "reason": <one line> }
-//
-// Everything else — diagnostics and the session's own output — goes to stderr.
-// Every non-`proceed` path (spawn/session error, unsure, missing or malformed
-// verdict) resolves to `not_yet`. We never `proceed` on doubt.
-//
-// This is a sibling of `run-task`, not a mode of it: routing the verdict back
-// to the board, the decision to invoke the judge, and hosting all live
-// elsewhere. This entrypoint only reads and prints.
+// Per-node soft-block judge: reads one node and prints one verdict JSON.
+// Never `proceed` on doubt — every non-`proceed` path resolves to `not_yet`.
 
 type Verdict = "proceed" | "not_yet";
 
@@ -69,26 +53,9 @@ function buildPrompt(nodeId: string): string {
   ].join("\n");
 }
 
-// Read-only session configuration. We do NOT use an auto/bypass permission
-// mode; instead we allowlist only read-only tools and read-only `aj`
-// subcommands. In headless `--print` mode any tool call outside this allowlist
-// is denied (there is no one to prompt), so the session cannot claim, edit, or
-// post — enforcement, not just instruction.
-const READONLY_ALLOWED_TOOLS = [
-  "Read",
-  "Grep",
-  "Glob",
-  "Skill",
-  "Bash(aj context:*)",
-  "Bash(aj search:*)",
-  "Bash(aj tasks:*)",
-  "Bash(aj whoami:*)",
-].join(",");
-
 const CLAUDE_ARGS = [
   "--print",
-  "--permission-mode", "default",
-  "--allowedTools", READONLY_ALLOWED_TOOLS,
+  "--permission-mode", "auto",
   "--no-session-persistence",
   "--output-format", "json",
 ];
@@ -114,10 +81,8 @@ function runSession(nodeId: string): Promise<{ exitCode: number | null; sessionI
   });
 }
 
-// Pull the final assistant text out of the `--output-format json` envelope.
-// Falls back to the raw stdout if the envelope can't be parsed, so a malformed
-// envelope still gets a shot at verdict extraction (and otherwise degrades to
-// not_yet downstream).
+// Final assistant text from the `--output-format json` envelope; raw stdout on
+// parse failure so a malformed envelope still gets a shot at verdict extraction.
 function sessionResultText(stdout: string): string {
   try {
     const result = JSON.parse(stdout)?.result;
@@ -128,10 +93,7 @@ function sessionResultText(stdout: string): string {
   return stdout;
 }
 
-// Extract the verdict object from the session's final text. Our schema is flat
-// (verdict + one-line reason, optional node_id), so match flat JSON objects
-// that mention "verdict" and take the last well-formed one. Returns null if
-// none parses to a valid verdict.
+// Last well-formed flat JSON object mentioning "verdict"; null if none valid.
 function extractVerdict(text: string): { verdict: Verdict; reason: string } | null {
   const matches = text.match(/\{[^{}]*"verdict"[^{}]*\}/g);
   if (!matches) return null;

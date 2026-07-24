@@ -53,7 +53,7 @@ Both entrypoints print exactly one JSON object on stdout; everything else
 
 **`run-judge`** — `{ "node_id", "verdict", "reason" }`. `verdict` is `proceed`
 (exit 0) or `not_yet` (exit 10); `reason` is one line. The judge session is
-constrained **read-only** — it cannot claim, edit, or post to the board (only
-read-only `aj` commands and read-only tools are allowed). Every non-`proceed`
-path — spawn/session error, unsure, missing or malformed verdict — resolves to
-`not_yet`. It never returns `proceed` on doubt.
+instructed to be **read-only** — it only reads and prints; it does not claim,
+edit, or post to the board. Every non-`proceed` path — spawn/session error,
+unsure, missing or malformed verdict — resolves to `not_yet`. It never returns
+`proceed` on doubt.
