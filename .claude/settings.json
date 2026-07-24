@@ -1,0 +1,13 @@
+{
+  "extraKnownMarketplaces": {
+    "code-style": {
+      "source": {
+        "source": "github",
+        "repo": "DanWilkins2107/code-style"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "code-style@code-style": true
+  }
+}
