@@ -1,9 +1,6 @@
-import { spawnTool } from "./session.js";
+import { spawnTool } from "./session";
 
-// Entrypoint-level plumbing shared by the runner entrypoints (`run-task`,
-// `run-judge`): the auth preflight, stderr logging, the machine-readable result
-// line, and the base Claude Code args. Spawn/output wiring lives in session.ts.
-
+// Exit code when invoked with no/invalid CLI args (usage error).
 export const USAGE_EXIT = 2;
 
 export const CLAUDE_ARGS = [

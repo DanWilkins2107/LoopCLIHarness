@@ -1,5 +1,5 @@
-import { spawnTool, wireSessionOutput, sessionReportedError } from "./session.js";
-import { CLAUDE_ARGS, USAGE_EXIT, makeLog, emitResult, preflight } from "./entrypoint.js";
+import { spawnTool, wireSessionOutput, sessionReportedError } from "./session";
+import { CLAUDE_ARGS, USAGE_EXIT, makeLog, emitResult, preflight } from "./entrypoint";
 
 // Per-node soft-block judge: reads one node and prints one verdict JSON.
 // Never `proceed` on doubt — every non-`proceed` path resolves to `not_yet`.

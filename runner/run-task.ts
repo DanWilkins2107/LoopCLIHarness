@@ -1,6 +1,6 @@
-import { spawnTool, wireSessionOutput, sessionReportedError } from "./session.js";
-import { parseSandboxEnv, buildBwrapArgs, type SandboxEnv } from "./sandbox.js";
-import { CLAUDE_ARGS, USAGE_EXIT, makeLog, emitResult, preflight } from "./entrypoint.js";
+import { spawnTool, wireSessionOutput, sessionReportedError } from "./session";
+import { parseSandboxEnv, buildBwrapArgs, type SandboxEnv } from "./sandbox";
+import { CLAUDE_ARGS, USAGE_EXIT, makeLog, emitResult, preflight } from "./entrypoint";
 
 type Outcome = "completed" | "asked_user" | "errored";
 
