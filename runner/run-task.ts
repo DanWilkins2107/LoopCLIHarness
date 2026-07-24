@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
-import { parseSandboxEnv, planSession, type SandboxEnv } from "./sandbox.js";
+import { parseSandboxEnv, buildBwrapArgs, type SandboxEnv } from "./sandbox.js";
 
 type Outcome = "completed" | "asked_user" | "errored";
 
@@ -79,13 +79,10 @@ function sessionReportedError(stdout: string): boolean {
 }
 
 function runSession(nodeId: string, sandboxEnv: SandboxEnv): Promise<{ exitCode: number | null; sessionIsError: boolean }> {
-  // Every session runs inside an unprivileged bwrap namespace: it never holds
-  // host-root and all egress is forced through the host proxy. There is no
-  // unconfined path.
-  const plan = planSession("claude", CLAUDE_ARGS, { env: sandboxEnv });
+  const bwrapArgs = buildBwrapArgs("claude", CLAUDE_ARGS, { env: sandboxEnv });
   log(`session sandboxed via bwrap (workdir=${sandboxEnv.LOOP_SESSION_WORKDIR})`);
   return new Promise((resolve) => {
-    const child = spawnTool(plan.bin, plan.args, ["pipe", "pipe", "pipe"]);
+    const child = spawnTool("bwrap", bwrapArgs, ["pipe", "pipe", "pipe"]);
     child.stdin?.on("error", () => {});
     child.stdin?.write(buildPrompt(nodeId));
     child.stdin?.end();
@@ -131,9 +128,6 @@ function preflight(): Promise<{ ok: true } | { ok: false; detail: string }> {
   });
 }
 
-// `bwrap` must be present: a missing sandbox fails CLOSED, because running
-// unconfined would drop the "session never holds host-root" precondition the
-// whole egress model rests on.
 function sandboxPreflight(): Promise<{ ok: true } | { ok: false; detail: string }> {
   return new Promise((resolve) => {
     const child = spawnTool("bwrap", ["--version"], ["ignore", "ignore", "pipe"]);
