@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "tsx run-task.ts",
+    "judge": "tsx run-judge.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {

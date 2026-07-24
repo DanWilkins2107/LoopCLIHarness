@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
+import { spawnTool, wireSessionOutput, sessionReportedError } from "./session.js";
 import { parseSandboxEnv, buildBwrapArgs, type SandboxEnv } from "./sandbox.js";
 
 type Outcome = "completed" | "asked_user" | "errored";
@@ -46,37 +46,6 @@ const CLAUDE_ARGS = [
   "--no-session-persistence",
   "--output-format", "json",
 ];
-
-const IS_WINDOWS = process.platform === "win32";
-
-function spawnTool(bin: string, args: string[], stdio: StdioOptions) {
-  // On Windows we spawn through the shell (so `.cmd` shims like `claude`/`aj`
-  // resolve), which means each arg is re-parsed by cmd.exe. Quote any arg
-  // containing whitespace or a cmd metacharacter so it survives that second
-  // parse intact; POSIX shells get the args untouched via the array form.
-  const finalArgs = IS_WINDOWS
-    ? args.map((a) => (/[\s"&|<>^()%!]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a))
-    : args;
-  return spawn(bin, finalArgs, { stdio, shell: IS_WINDOWS });
-}
-
-function wireSessionOutput(child: ChildProcess): () => string {
-  let stdout = "";
-  child.stdout?.on("data", (d) => {
-    stdout += d;
-    process.stderr.write(d);
-  });
-  child.stderr?.on("data", (d) => process.stderr.write(d));
-  return () => stdout;
-}
-
-function sessionReportedError(stdout: string): boolean {
-  try {
-    return JSON.parse(stdout)?.is_error === true;
-  } catch {
-    return false;
-  }
-}
 
 function runSession(nodeId: string, sandboxEnv: SandboxEnv): Promise<{ exitCode: number | null; sessionIsError: boolean }> {
   const bwrapArgs = buildBwrapArgs("claude", CLAUDE_ARGS, { env: sandboxEnv });
