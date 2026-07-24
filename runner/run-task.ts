@@ -1,19 +1,24 @@
 import { spawnTool, wireSessionOutput, sessionReportedError } from "./session";
 import { parseSandboxEnv, buildBwrapArgs, type SandboxEnv } from "./sandbox";
 import { CLAUDE_ARGS, USAGE_EXIT, makeLog, emitResult, preflight } from "./entrypoint";
+import { classifyEnvelope } from "./classify";
 
-type Outcome = "completed" | "asked_user" | "errored";
+type Outcome = "completed" | "asked_user" | "errored" | "usage_limited" | "api_error";
 
 const EXIT_CODES: Record<Outcome, number> = {
   completed: 0,
   asked_user: 10,
   errored: 20,
+  usage_limited: 21,
+  api_error: 22,
 };
 
 const ASKED_USER_STATUS = "awaiting_human_response";
 
-function emitAndExit(nodeId: string | null, outcome: Outcome, detail: string): never {
-  emitResult(nodeId, EXIT_CODES[outcome], { outcome, detail });
+function emitAndExit(nodeId: string | null, outcome: Outcome, detail: string, resetAt?: number): never {
+  const payload: Record<string, unknown> = { outcome, detail };
+  if (resetAt !== undefined) payload.reset_at = resetAt;
+  emitResult(nodeId, EXIT_CODES[outcome], payload);
 }
 
 const log = makeLog("run-task");
@@ -35,7 +40,7 @@ function buildPrompt(nodeId: string): string {
   ].join("\n");
 }
 
-function runSession(nodeId: string, sandboxEnv: SandboxEnv): Promise<{ exitCode: number | null; sessionIsError: boolean }> {
+function runSession(nodeId: string, sandboxEnv: SandboxEnv): Promise<{ exitCode: number | null; sessionIsError: boolean; stdout: string }> {
   const bwrapArgs = buildBwrapArgs("claude", CLAUDE_ARGS, { env: sandboxEnv });
   log(`session sandboxed via bwrap (workdir=${sandboxEnv.LOOP_SESSION_WORKDIR})`);
   return new Promise((resolve) => {
@@ -48,11 +53,11 @@ function runSession(nodeId: string, sandboxEnv: SandboxEnv): Promise<{ exitCode:
 
     child.on("error", (err) => {
       log(`failed to spawn session: ${err.message}`);
-      resolve({ exitCode: null, sessionIsError: true });
+      resolve({ exitCode: null, sessionIsError: true, stdout: getStdout() });
     });
 
     child.on("close", (code) => {
-      resolve({ exitCode: code, sessionIsError: sessionReportedError(getStdout()) });
+      resolve({ exitCode: code, sessionIsError: sessionReportedError(getStdout()), stdout: getStdout() });
     });
   });
 }
@@ -122,9 +127,11 @@ function printUsage(): void {
       '  { "node_id", "outcome", "detail" }',
       "",
       "Outcomes and exit codes:",
-      "  completed  (exit 0)",
-      "  asked_user (exit 10)",
-      "  errored    (exit 20)",
+      "  completed     (exit 0)",
+      "  asked_user    (exit 10)",
+      "  errored       (exit 20)",
+      "  usage_limited (exit 21)  + reset_at epoch in the result line",
+      "  api_error     (exit 22)",
       "",
     ].join("\n") + "\n"
   );
@@ -161,6 +168,14 @@ async function main(): Promise<void> {
   const result = await runSession(nodeId, sandboxEnv.env);
   const postStatus = await queryNodeStatus(nodeId);
   const { outcome, detail } = classify(result, postStatus);
+
+  if (outcome === "errored") {
+    const sub = classifyEnvelope(result.stdout);
+    if (sub) {
+      log(`outcome=${sub.outcome} (${detail})`);
+      emitAndExit(nodeId, sub.outcome, detail, sub.reset_at);
+    }
+  }
 
   log(`outcome=${outcome} (${detail})`);
   emitAndExit(nodeId, outcome, detail);

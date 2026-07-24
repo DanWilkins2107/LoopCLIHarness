@@ -49,7 +49,13 @@ Both entrypoints print exactly one JSON object on stdout; everything else
 (diagnostics and the session's own output) goes to stderr.
 
 **`run-task`** — `{ "node_id", "outcome", "detail" }`. `outcome` is `completed`
-(exit 0), `asked_user` (exit 10), or `errored` (exit 20).
+(exit 0), `asked_user` (exit 10), `errored` (exit 20), `usage_limited`
+(exit 21), or `api_error` (exit 22). An errored session is sub-classified from
+the claude JSON envelope's `result` string (`classify.ts`): a usage-limit
+signature yields `usage_limited` and adds `reset_at` (unix epoch) to the line; a
+transient API signature (`overloaded_error`/529/5xx/connection) yields
+`api_error`; anything else stays `errored`. The supervisor reads these codes to
+decide waits/retries.
 
 **`run-judge`** — `{ "node_id", "verdict", "reason" }`. `verdict` is `proceed`
 (exit 0) or `not_yet` (exit 10); `reason` is one line. The judge session is

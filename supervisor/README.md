@@ -1,10 +1,11 @@
 # `loop` — deterministic supervisor
 
-Drives the [single-session runner](../runner/) in a batch: repeatedly picks the
-first recommended AgentJira task, runs it in a fresh runner process, acts on the
-outcome, and stops when nothing is recommended. **Deterministic** — plain code,
-no LLM and no accumulating context in the loop itself; all per-task intelligence
-lives in the runner's fresh session.
+Drives the [single-session runner](../runner/) in a long-lived loop: repeatedly
+picks the first recommended AgentJira task, runs it in a fresh runner process,
+acts on the outcome, and gently polls when the board is idle (backing off on
+usage-limit / API-error exits). **Deterministic** — plain code, no LLM and no
+accumulating context in the loop itself; all per-task intelligence lives in the
+runner's fresh session.
 
 ## Prerequisites
 
@@ -33,32 +34,43 @@ Type-check with `npm run typecheck`.
    entry not already attempted this run. No selection logic of its own; it trusts
    the recommended order.
 2. **Run** — spawn the runner for that node, forwarding the runner's stderr and
-   reading its single stdout JSON line (`{ node_id, outcome, detail }`). The node
-   is marked attempted.
+   reading its single stdout JSON line (`{ node_id, outcome, detail, reset_at? }`).
 3. **Act** on the runner's outcome:
-   - `completed` — move on to the next recommended task.
-   - `asked_user` — the node is now with the human; leave it and continue.
-   - `errored` — surface it (a log line now, plus the run summary); **no retry**
-     this run.
+   - `completed` — move on; mark attempted.
+   - `asked_user` — the node is now with the human; leave it, mark attempted.
+   - `errored` — surface it (a log line, plus the run summary); mark attempted,
+     skip it for the rest of the run. **No retry.**
+   - `usage_limited` — sleep until `reset_at` (+ margin), or a fixed cooldown when
+     no `reset_at`, then **re-run the same node** — not counted, not marked
+     attempted (a usage limit is not the node's fault).
+   - `api_error` — transient. Exponential backoff and re-run the same node up to a
+     retry cap; on exhaustion treat as `errored`.
 
-Each node is attempted **at most once per run**. The attempted-set prevents
-re-picking an errored node, or one the CLI still lists just after a `completed`
-run advanced its status.
+A terminally-handled node is attempted **at most once per idle cycle**; errored
+nodes are skipped for the rest of the process. The attempted-set also prevents
+re-picking a node the CLI still lists just after a `completed` run advanced its
+status.
 
-## Termination and output
+## Backoff and idle polling
 
-The loop ends when no *unattempted* recommended task remains (also if the board
-can't be read). It then prints a machine-readable summary to **stdout** and exits
-`0`:
+Rate-limit/backoff/idle tuning is **hardcoded** in `constants.ts` (not
+user-editable); the sleep + exponential-backoff math is in `backoff.ts`
+(`min(base·2ⁿ, cap)`).
+
+The loop is a **long-lived poller**: when no recommended agent-turn task remains
+it logs `idle`, sleeps `IDLE_INTERVAL_S`, and re-queries — it does **not** exit.
+Each idle cycle clears the attempted-set (so nodes newly in an agent-turn status
+get picked up) while keeping a persistent errored-node skip set. `SIGINT`/
+`SIGTERM` stops it after the current node, prints the summary, and exits `0`.
+
+## Output
+
+On shutdown it prints a machine-readable summary to **stdout**:
 
 ```json
 { "attempted": 3, "completed": 2, "asked_user": 1, "errored": 0, "errored_node_ids": [] }
 ```
 
 All diagnostics and the runners' own output go to **stderr**; stdout carries only
-the final summary line.
-
-## Scope (v1)
-
-Deployment-agnostic: it runs to completion and exits — no polling, backoff, or
-sleep-when-idle, and no soft-block judgment. Those are separate follow-ups.
+the final summary line. Exit codes 21 (`usage_limited`) / 22 (`api_error`) come
+from the runner — see [`../runner/`](../runner/).
