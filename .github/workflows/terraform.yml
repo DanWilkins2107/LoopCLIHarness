@@ -1,0 +1,36 @@
+name: Terraform
+
+on:
+  pull_request:
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/terraform.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/terraform.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - name: fmt
+        run: terraform fmt -check -recursive terraform/
+
+      - name: validate
+        run: |
+          for dir in $(find terraform -type f -name '*.tf' -printf '%h\n' | sort -u); do
+            echo "== $dir =="
+            terraform -chdir="$dir" init -backend=false
+            terraform -chdir="$dir" validate
+          done
