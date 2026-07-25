@@ -12,11 +12,13 @@ variable "tags" {
 }
 
 variable "repo_owner" {
-  type = string
+  type        = string
+  description = "GitHub org/user that owns the repo. Scopes the OIDC trust sub. Change only when the repo moves owners."
 }
 
 variable "repo_name" {
-  type = string
+  type        = string
+  description = "GitHub repo name. Scopes the OIDC trust sub. Change only when the repo is renamed/moved."
 }
 
 variable "prod_environment" {
