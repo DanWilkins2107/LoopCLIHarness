@@ -111,7 +111,9 @@ async function main(): Promise<void> {
     if (!next) {
       if (idleSince === null) idleSince = nowS();
       if (nowS() - idleSince >= IDLE_SHUTDOWN_S) {
-        log(`idle ${IDLE_SHUTDOWN_S}s with nothing in progress — shutting down (exit 0 stops the VM)`);
+        // exit 0 is the stop signal; turning it into an actual VM stop is owned by
+        // AgentJira node 86295af4 "Stop the VM on supervisor idle-exit".
+        log(`idle ${IDLE_SHUTDOWN_S}s with nothing in progress — shutting down (exit 0 signals VM stop)`);
         break;
       }
       log(`idle — no recommended task; sleeping ${IDLE_INTERVAL_S}s`);
