@@ -108,6 +108,9 @@ async function main(): Promise<void> {
     }
     const next = recommended.find((t) => !attempted.has(t.id) && !erroredNodes.has(t.id));
     if (!next) {
+      // TODO(node c1dcc486 "Lambda-triggered VM supervisor architecture"): that
+      // node decides VM start/stop — including stopping the VM once idle here.
+      // This loop only polls; it never stops the VM itself.
       log(`idle — no recommended task; sleeping ${IDLE_INTERVAL_S}s`);
       attempted.clear();
       await sleepMs(IDLE_INTERVAL_S * 1000);
