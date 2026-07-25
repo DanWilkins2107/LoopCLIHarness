@@ -5,3 +5,4 @@ export const BACKOFF_CAP_S = 300;
 export const BACKOFF_JITTER = 0.25;
 export const MAX_RETRIES = 3;
 export const IDLE_INTERVAL_S = 30;
+export const IDLE_SHUTDOWN_S = 300;

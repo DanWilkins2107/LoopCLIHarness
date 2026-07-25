@@ -57,11 +57,18 @@ Rate-limit/backoff/idle tuning is **hardcoded** in `constants.ts` (not
 user-editable); the sleep + exponential-backoff math is in `backoff.ts`
 (`min(base·2ⁿ, cap)`).
 
-The loop is a **long-lived poller**: when no recommended agent-turn task remains
-it logs `idle`, sleeps `IDLE_INTERVAL_S`, and re-queries — it does **not** exit.
-Each idle cycle clears the attempted-set (so nodes newly in an agent-turn status
-get picked up) while keeping a persistent errored-node skip set. `SIGINT`/
-`SIGTERM` stops it after the current node, prints the summary, and exits `0`.
+The loop polls while there is work: when no recommended agent-turn task remains
+it logs `idle`, sleeps `IDLE_INTERVAL_S`, and re-queries. Each idle cycle clears
+the attempted-set (so nodes newly in an agent-turn status get picked up) while
+keeping a persistent errored-node skip set.
+
+After `IDLE_SHUTDOWN_S` of **continuous** idle (nothing in progress — the loop is
+sequential, so reaching the idle branch means nothing is running) it stops and
+exits `0`. That clean exit is the supervisor's way of controlling VM stop: when
+the board has been empty this long, the process ends so whatever launched it on
+the VM can tear the instance down. Starting the VM is a separate concern (the
+Lambda-triggered supervisor architecture). `SIGINT`/`SIGTERM` also stops it after
+the current node, prints the summary, and exits `0`.
 
 ## Output
 

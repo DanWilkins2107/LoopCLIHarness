@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { sleepMs, apiBackoffMs } from "./backoff";
-import { RESET_MARGIN_S, LIMIT_COOLDOWN_S, MAX_RETRIES, IDLE_INTERVAL_S } from "./constants";
+import { RESET_MARGIN_S, LIMIT_COOLDOWN_S, MAX_RETRIES, IDLE_INTERVAL_S, IDLE_SHUTDOWN_S } from "./constants";
 
 type TerminalOutcome = "completed" | "asked_user" | "errored";
 type Outcome = TerminalOutcome | "usage_limited" | "api_error";
@@ -100,6 +100,7 @@ async function main(): Promise<void> {
 
   log(`starting${projectId ? ` (project ${projectId})` : ""}`);
 
+  let idleSince: number | null = null;
   while (!stopping) {
     const { data: recommended, error } = await fetchRecommended(projectId);
     if (error !== null) {
@@ -108,14 +109,17 @@ async function main(): Promise<void> {
     }
     const next = recommended.find((t) => !attempted.has(t.id) && !erroredNodes.has(t.id));
     if (!next) {
-      // TODO(node c1dcc486 "Lambda-triggered VM supervisor architecture"): that
-      // node decides VM start/stop — including stopping the VM once idle here.
-      // This loop only polls; it never stops the VM itself.
+      if (idleSince === null) idleSince = nowS();
+      if (nowS() - idleSince >= IDLE_SHUTDOWN_S) {
+        log(`idle ${IDLE_SHUTDOWN_S}s with nothing in progress — shutting down (exit 0 stops the VM)`);
+        break;
+      }
       log(`idle — no recommended task; sleeping ${IDLE_INTERVAL_S}s`);
       attempted.clear();
       await sleepMs(IDLE_INTERVAL_S * 1000);
       continue;
     }
+    idleSince = null;
 
     log(`running ${next.id}${next.title ? ` — ${next.title}` : ""}`);
     const { outcome, detail, reset_at } = await runNode(next.id);
