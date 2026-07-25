@@ -51,7 +51,7 @@ Both entrypoints print exactly one JSON object on stdout; everything else
 **`run-task`** — `{ "node_id", "outcome", "detail" }`. `outcome` is `completed`
 (exit 0), `asked_user` (exit 10), `errored` (exit 20), `usage_limited`
 (exit 21), or `api_error` (exit 22). An errored session is sub-classified from
-the claude JSON envelope's `result` string (`classify.ts`): a usage-limit
+the claude JSON envelope's `result` string (`classify-error.ts`): a usage-limit
 signature yields `usage_limited` and adds `reset_at` (unix epoch) to the line; a
 transient API signature (`overloaded_error`/529/5xx/connection) yields
 `api_error`; anything else stays `errored`. The supervisor reads these codes to

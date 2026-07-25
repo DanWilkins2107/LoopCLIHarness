@@ -1,4 +1,4 @@
-export type ErrorClass = "usage_limited" | "api_error";
+export type ErrorClass = "usage_limited" | "api_error" | "unknown";
 
 export interface EnvelopeClass {
   outcome: ErrorClass;
@@ -21,11 +21,11 @@ function lastResult(stdout: string): string | null {
   return null;
 }
 
-export function classifyEnvelope(stdout: string): EnvelopeClass | null {
+export function classifyError(stdout: string): EnvelopeClass {
   const result = lastResult(stdout);
-  if (result == null) return null;
+  if (result == null) return { outcome: "unknown" };
   const limit = USAGE_LIMIT_RE.exec(result);
   if (limit) return { outcome: "usage_limited", reset_at: Number(limit[1]) };
   if (API_ERROR_RE.test(result)) return { outcome: "api_error" };
-  return null;
+  return { outcome: "unknown" };
 }

@@ -1,7 +1,7 @@
 import { spawnTool, wireSessionOutput, sessionReportedError } from "./session";
 import { parseSandboxEnv, buildBwrapArgs, type SandboxEnv } from "./sandbox";
 import { CLAUDE_ARGS, USAGE_EXIT, makeLog, emitResult, preflight } from "./entrypoint";
-import { classifyEnvelope } from "./classify";
+import { classifyError } from "./classify-error";
 
 type Outcome = "completed" | "asked_user" | "errored" | "usage_limited" | "api_error";
 
@@ -170,8 +170,8 @@ async function main(): Promise<void> {
   const { outcome, detail } = classify(result, postStatus);
 
   if (outcome === "errored") {
-    const sub = classifyEnvelope(result.stdout);
-    if (sub) {
+    const sub = classifyError(result.stdout);
+    if (sub.outcome !== "unknown") {
       log(`outcome=${sub.outcome} (${detail})`);
       emitAndExit(nodeId, sub.outcome, detail, sub.reset_at);
     }
