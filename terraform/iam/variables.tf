@@ -7,8 +7,12 @@ variable "name_prefix" {
 }
 
 variable "tags" {
-  type    = map(string)
-  default = {}
+  type = map(string)
+}
+
+variable "account_id" {
+  type        = string
+  description = "AWS account the CI roles live in. Builds the exact state-lock ARN for least-priv."
 }
 
 variable "repo_owner" {
@@ -19,9 +23,4 @@ variable "repo_owner" {
 variable "repo_name" {
   type        = string
   description = "GitHub repo name. Scopes the OIDC trust sub. Change only when the repo is renamed/moved."
-}
-
-variable "prod_environment" {
-  type    = string
-  default = "prod"
 }

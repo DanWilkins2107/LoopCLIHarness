@@ -1,7 +1,3 @@
-data "aws_caller_identity" "current" {}
-
-data "aws_region" "current" {}
-
 data "tls_certificate" "github" {
   url = "https://token.actions.githubusercontent.com/.well-known/openid-configuration"
 }
@@ -58,7 +54,7 @@ data "aws_iam_policy_document" "ci_apply_assume" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.repo_owner}/${var.repo_name}:environment:${var.prod_environment}"]
+      values   = ["repo:${var.repo_owner}/${var.repo_name}:environment:prod"]
     }
   }
 }
@@ -84,7 +80,7 @@ data "aws_iam_policy_document" "state_access" {
     sid       = "StateLock"
     effect    = "Allow"
     actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem"]
-    resources = ["arn:aws:dynamodb:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-tflock"]
+    resources = ["arn:aws:dynamodb:${var.region}:${var.account_id}:table/${var.name_prefix}-tflock"]
   }
 }
 
