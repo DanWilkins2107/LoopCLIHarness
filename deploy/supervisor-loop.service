@@ -1,3 +1,5 @@
+# systemd service unit (INI-style). Installed to /etc/systemd/system/, managed with
+# systemctl. Syntax reference: `man systemd.unit` / `man systemd.service`.
 [Unit]
 Description=LoopCliHarness supervisor loop (idle self-stop)
 Documentation=file:/opt/loopcliharness/deploy/README.md
