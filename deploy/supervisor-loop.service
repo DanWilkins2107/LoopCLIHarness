@@ -1,0 +1,23 @@
+# systemd service unit (INI-style). Installed to /etc/systemd/system/, managed with
+# systemctl. Syntax reference: `man systemd.unit` / `man systemd.service`.
+[Unit]
+Description=LoopCliHarness supervisor loop (idle self-stop)
+Documentation=file:/opt/loopcliharness/deploy/README.md
+# Runs supervisor/loop.ts; its idle-shutdown branch exits 0 as the stop signal.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/loopcliharness/supervisor
+ExecStart=/usr/bin/env npm start
+# Batch drains the board to completion (can be hours) — never time it out.
+TimeoutStartSec=infinity
+# Clean idle exit (0) -> ordered poweroff -> instance stops. VM Terraform (AgentJira 8276b707)
+# sets InstanceInitiatedShutdownBehavior=stop, so this stops the box, never terminates it.
+# Guard on success: a fatal non-zero exit skips poweroff, leaving the unit `failed` and the
+# box up as an inspection window (visible in journalctl).
+ExecStopPost=/bin/sh -c 'test "$SERVICE_RESULT" = success && /sbin/systemctl poweroff'
+
+[Install]
+WantedBy=multi-user.target
