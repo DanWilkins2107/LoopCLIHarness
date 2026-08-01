@@ -4,6 +4,8 @@ locals {
   private_subnet_cidr = "10.0.1.0/24"
 }
 
+# Both subnets pin to names[0] so NAT traffic never crosses an AZ boundary
+# (cross-AZ transfer is billed on top of NAT processing).
 data "aws_availability_zones" "available" {
   state = "available"
 }
