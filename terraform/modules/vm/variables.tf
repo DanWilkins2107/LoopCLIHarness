@@ -2,15 +2,20 @@ variable "name" {
   type = string
 }
 
-variable "subnet_id" {
+variable "vpc_id" {
   type = string
 }
 
-variable "ssh_public_key" {
+variable "dns_resolver_cidr" {
   type = string
 }
 
-variable "tags" {
-  type    = map(string)
-  default = {}
+variable "instance_type" {
+  type    = string
+  default = "t3.medium"
+}
+
+variable "root_volume_size" {
+  type    = number
+  default = 30
 }
