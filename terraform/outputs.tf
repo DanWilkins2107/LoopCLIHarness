@@ -11,7 +11,7 @@ output "vm_security_group_id" {
 }
 
 output "vm_subnet_id" {
-  value = module.vm.subnet_id
+  value = module.network.subnet_id
 }
 
 output "vm_instance_role_name" {
