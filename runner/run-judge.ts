@@ -1,10 +1,9 @@
 import { spawnTool, wireSessionOutput, sessionReportedError } from "./session";
 import { CLAUDE_ARGS, USAGE_EXIT, makeLog, emitResult, preflight } from "./entrypoint";
+import { extractVerdict, type Verdict } from "./verdict";
 
 // Per-node soft-block judge: reads one node and prints one verdict JSON.
 // Never `proceed` on doubt — every non-`proceed` path resolves to `not_yet`.
-
-type Verdict = "proceed" | "not_yet";
 
 const EXIT_CODES: Record<Verdict, number> = {
   proceed: 0,
@@ -79,26 +78,6 @@ function sessionResultText(stdout: string): string {
     /* fall through to raw */
   }
   return stdout;
-}
-
-// Last well-formed flat JSON object mentioning "verdict"; null if none valid.
-function extractVerdict(text: string): { verdict: Verdict; reason: string } | null {
-  const matches = text.match(/\{[^{}]*"verdict"[^{}]*\}/g);
-  if (!matches) return null;
-  for (let i = matches.length - 1; i >= 0; i--) {
-    try {
-      const obj = JSON.parse(matches[i]);
-      if (obj?.verdict === "proceed" || obj?.verdict === "not_yet") {
-        const reason = typeof obj.reason === "string" && obj.reason.trim()
-          ? obj.reason.trim()
-          : "(no reason given)";
-        return { verdict: obj.verdict, reason };
-      }
-    } catch {
-      /* try the next candidate */
-    }
-  }
-  return null;
 }
 
 function printUsage(): void {
