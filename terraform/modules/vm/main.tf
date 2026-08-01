@@ -1,5 +1,3 @@
-# No ingress: access is SSM Session Manager only. Egress is what the SSM agent
-# needs; default-deny + proxy is owned by a later node.
 resource "aws_security_group" "vm" {
   name        = "${var.name}-vm"
   description = "Base VM security group: no ingress, egress limited to SSM"
