@@ -1,12 +1,25 @@
 resource "aws_security_group" "vm" {
   name        = "${var.name}-vm"
-  description = "Base VM security group: no ingress, egress limited to SSM"
+  description = "Base VM security group: no ingress, egress limited to SSM, DNS and apt"
   vpc_id      = var.vpc_id
 
   egress {
     description = "SSM endpoints"
     from_port   = 443
     to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Ubuntu 24.04 ships plain-http apt sources (regional ec2.archive.ubuntu.com,
+  # security.ubuntu.com), so without this nothing installs at boot. Destination
+  # is the open internet because those mirrors are a rotating public pool
+  # reached over NAT; egress restriction proper is host-level (nftables +
+  # allowlist proxy), not this SG.
+  egress {
+    description = "apt over http"
+    from_port   = 80
+    to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -83,6 +96,9 @@ resource "aws_launch_template" "vm" {
 
   instance_initiated_shutdown_behavior = "terminate"
   vpc_security_group_ids               = [aws_security_group.vm.id]
+
+  # Readable from IMDS by anything on the box — never put secrets here.
+  user_data = base64encode(templatefile("${path.module}/cloud-init.yaml.tftpl", {}))
 
   iam_instance_profile {
     arn = aws_iam_instance_profile.vm.arn

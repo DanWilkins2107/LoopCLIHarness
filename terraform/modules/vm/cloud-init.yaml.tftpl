@@ -1,0 +1,22 @@
+#cloud-config
+package_update: true
+packages:
+  - git
+  - bubblewrap
+  - ca-certificates
+  - curl
+  - gnupg
+
+runcmd:
+  - set -eux
+  - install -m 0755 -d /etc/apt/keyrings
+  # apt reads an ASCII-armored key directly when the file is named .asc, so the
+  # NodeSource key needs no dearmor step; GitHub already publishes binary.
+  - curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o /etc/apt/keyrings/nodesource.asc
+  - curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli.gpg
+  - chmod 0644 /etc/apt/keyrings/nodesource.asc /etc/apt/keyrings/githubcli.gpg
+  - echo "deb [signed-by=/etc/apt/keyrings/nodesource.asc] https://deb.nodesource.com/node_22.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
+  - echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/githubcli.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
+  - DEBIAN_FRONTEND=noninteractive apt-get update
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs gh
+  - npm i -g @anthropic-ai/claude-code
