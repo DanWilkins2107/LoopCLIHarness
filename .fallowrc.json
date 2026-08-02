@@ -1,0 +1,19 @@
+{
+  // maxCrap is parked at 1000 because CRAP needs coverage data; without it the
+  // score degrades to cc^2 + cc, making the default of 30 a de-facto
+  // max-cyclomatic-5. Once the Coverage gate lands, pass --coverage (Istanbul,
+  // not v8) and drop this to 30.
+  "health": {
+    "maxCyclomatic": 15,
+    "maxCognitive": 15,
+    "maxCrap": 1000,
+    "thresholdOverrides": [
+      {
+        "files": ["supervisor/loop.ts"],
+        "functions": ["main"],
+        "maxCognitive": 28,
+        "reason": "main() drives the whole supervisor poll loop; its cognitive score is nesting inherent to that loop, not incidental. Ratchet back to the default of 15 when main() is split into per-phase helpers."
+      }
+    ]
+  }
+}
