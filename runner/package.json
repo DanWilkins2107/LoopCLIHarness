@@ -8,12 +8,15 @@
     "start": "tsx run-task.ts",
     "judge": "tsx run-judge.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "mutation": "stryker run"
   },
   "engines": {
     "node": ">=18"
   },
   "devDependencies": {
+    "@stryker-mutator/core": "^9.6.1",
+    "@stryker-mutator/vitest-runner": "^9.6.1",
     "@types/node": "^20.11.0",
     "tsx": "^4.7.0",
     "typescript": "^5.4.0",
