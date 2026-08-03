@@ -54,7 +54,7 @@ data "aws_iam_policy_document" "ci_apply_assume" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.repo_owner}/${var.repo_name}:environment:prod"]
+      values   = ["repo:${var.repo_owner}/${var.repo_name}:environment:deploy"]
     }
   }
 }
