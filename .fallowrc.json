@@ -1,19 +1,17 @@
 {
-  // maxCrap is parked at 1000 because CRAP needs coverage data; without it the
-  // score degrades to cc^2 + cc, making the default of 30 a de-facto
-  // max-cyclomatic-5. Once the Coverage gate lands, pass --coverage (Istanbul,
-  // not v8) and drop this to 30.
+  // maxCyclomatic / maxCognitive are set at the current worst function on main,
+  // so the gate only ever ratchets down. No thresholdOverrides: a function over
+  // the line gets split into helpers, not exempted.
+  //
+  // maxCrap is parked at 1000, i.e. off. CRAP (Change Risk Anti-Patterns) is
+  // cc^2 * (1 - coverage)^3 + cc — a risk score that multiplies complexity by
+  // how untested the function is. With no coverage data it collapses to
+  // cc^2 + cc, which is just maxCyclomatic restated, so the default of 30 would
+  // silently act as a max-cyclomatic of 5. Once the Coverage gate lands, pass
+  // --coverage (Istanbul, not v8) and drop this to 30 for a real risk gate.
   "health": {
-    "maxCyclomatic": 15,
-    "maxCognitive": 15,
-    "maxCrap": 1000,
-    "thresholdOverrides": [
-      {
-        "files": ["supervisor/loop.ts"],
-        "functions": ["main"],
-        "maxCognitive": 28,
-        "reason": "main() drives the whole supervisor poll loop; its cognitive score is nesting inherent to that loop, not incidental. Ratchet back to the default of 15 when main() is split into per-phase helpers."
-      }
-    ]
+    "maxCyclomatic": 10,
+    "maxCognitive": 11,
+    "maxCrap": 1000
   }
 }
