@@ -1,5 +1,11 @@
 import { spawnTool, wireSessionOutput, sessionReportedError } from "./session";
-import { CLAUDE_ARGS, USAGE_EXIT, makeLog, emitResult, preflight } from "./entrypoint";
+import {
+  CLAUDE_ARGS,
+  USAGE_EXIT,
+  makeLog,
+  emitResult,
+  preflight,
+} from "./entrypoint";
 import { extractVerdict, type Verdict } from "./verdict";
 
 // Per-node soft-block judge: reads one node and prints one verdict JSON.
@@ -10,7 +16,11 @@ const EXIT_CODES: Record<Verdict, number> = {
   not_yet: 10,
 };
 
-function emitAndExit(nodeId: string | null, verdict: Verdict, reason: string): never {
+function emitAndExit(
+  nodeId: string | null,
+  verdict: Verdict,
+  reason: string,
+): never {
   emitResult(nodeId, EXIT_CODES[verdict], { verdict, reason });
 }
 
@@ -47,7 +57,11 @@ function buildPrompt(nodeId: string): string {
   ].join("\n");
 }
 
-function runSession(nodeId: string): Promise<{ exitCode: number | null; sessionIsError: boolean; stdout: string }> {
+function runSession(nodeId: string): Promise<{
+  exitCode: number | null;
+  sessionIsError: boolean;
+  stdout: string;
+}> {
   return new Promise((resolve) => {
     const child = spawnTool("claude", CLAUDE_ARGS, ["pipe", "pipe", "pipe"]);
     child.stdin?.on("error", () => {});
@@ -63,7 +77,11 @@ function runSession(nodeId: string): Promise<{ exitCode: number | null; sessionI
 
     child.on("close", (code) => {
       const stdout = getStdout();
-      resolve({ exitCode: code, sessionIsError: sessionReportedError(stdout), stdout });
+      resolve({
+        exitCode: code,
+        sessionIsError: sessionReportedError(stdout),
+        stdout,
+      });
     });
   });
 }
@@ -96,7 +114,7 @@ function printUsage(): void {
       "READ-ONLY: the session cannot claim, edit, or post. Every non-proceed",
       "path resolves to not_yet — never proceed on doubt.",
       "",
-    ].join("\n") + "\n"
+    ].join("\n") + "\n",
   );
 }
 
@@ -121,7 +139,7 @@ async function main(): Promise<void> {
     emitAndExit(
       nodeId,
       "not_yet",
-      `session error (exit=${result.exitCode}${result.sessionIsError ? " is_error=true" : ""})`
+      `session error (exit=${result.exitCode}${result.sessionIsError ? " is_error=true" : ""})`,
     );
   }
 

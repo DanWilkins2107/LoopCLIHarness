@@ -2,7 +2,13 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { sleepMs, apiBackoffMs } from "./backoff";
-import { RESET_MARGIN_S, LIMIT_COOLDOWN_S, MAX_RETRIES, IDLE_INTERVAL_S, IDLE_SHUTDOWN_S } from "./constants";
+import {
+  RESET_MARGIN_S,
+  LIMIT_COOLDOWN_S,
+  MAX_RETRIES,
+  IDLE_INTERVAL_S,
+  IDLE_SHUTDOWN_S,
+} from "./constants";
 
 type TerminalOutcome = "completed" | "asked_user" | "errored";
 type Outcome = TerminalOutcome | "usage_limited" | "api_error";
@@ -22,7 +28,9 @@ function log(...args: string[]): void {
   process.stderr.write("[supervisor] " + args.join(" ") + "\n");
 }
 
-function fetchRecommended(projectId: string | null): Promise<Result<RecommendedTask[]>> {
+function fetchRecommended(
+  projectId: string | null,
+): Promise<Result<RecommendedTask[]>> {
   const args = ["tasks", "--json"];
   if (projectId) args.push("-p", projectId);
   return new Promise((done) => {
@@ -30,31 +38,51 @@ function fetchRecommended(projectId: string | null): Promise<Result<RecommendedT
     let out = "";
     child.stdout?.on("data", (d) => (out += d));
     child.stderr?.on("data", (d) => process.stderr.write(d));
-    child.on("error", (e) => done({ data: null, error: `aj tasks not runnable: ${e.message}` }));
+    child.on("error", (e) =>
+      done({ data: null, error: `aj tasks not runnable: ${e.message}` }),
+    );
     child.on("close", (code) => {
-      if (code !== 0) return done({ data: null, error: `aj tasks exited ${code}` });
+      if (code !== 0)
+        return done({ data: null, error: `aj tasks exited ${code}` });
       try {
         done({ data: JSON.parse(out).recommended ?? [], error: null });
       } catch {
-        done({ data: null, error: "aj tasks --json returned unparseable output" });
+        done({
+          data: null,
+          error: "aj tasks --json returned unparseable output",
+        });
       }
     });
   });
 }
 
-function runNode(nodeId: string): Promise<{ outcome: Outcome; detail: string; reset_at?: number }> {
+function runNode(
+  nodeId: string,
+): Promise<{ outcome: Outcome; detail: string; reset_at?: number }> {
   return new Promise((done) => {
-    const child = spawn("tsx", [RUNNER_ENTRY, nodeId], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("tsx", [RUNNER_ENTRY, nodeId], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let out = "";
     child.stdout?.on("data", (d) => (out += d));
     child.stderr?.on("data", (d) => process.stderr.write(d));
-    child.on("error", (e) => done({ outcome: "errored", detail: `failed to spawn runner: ${e.message}` }));
+    child.on("error", (e) =>
+      done({
+        outcome: "errored",
+        detail: `failed to spawn runner: ${e.message}`,
+      }),
+    );
     child.on("close", () => {
       try {
-        const { outcome, detail, reset_at } = JSON.parse(out.trim().split(/\r?\n/).at(-1)!);
+        const { outcome, detail, reset_at } = JSON.parse(
+          out.trim().split(/\r?\n/).at(-1)!,
+        );
         done({ outcome, detail: String(detail ?? ""), reset_at });
       } catch {
-        done({ outcome: "errored", detail: "runner produced no parseable outcome" });
+        done({
+          outcome: "errored",
+          detail: "runner produced no parseable outcome",
+        });
       }
     });
   });
@@ -62,7 +90,8 @@ function runNode(nodeId: string): Promise<{ outcome: Outcome; detail: string; re
 
 function parseProjectArg(argv: string[]): string | null {
   if (argv.length === 0) return null;
-  if ((argv[0] === "--project" || argv[0] === "-p") && argv.length === 2) return argv[1];
+  if ((argv[0] === "--project" || argv[0] === "-p") && argv.length === 2)
+    return argv[1];
   process.stderr.write(USAGE + "\n");
   process.exit(2);
 }
@@ -70,7 +99,7 @@ function parseProjectArg(argv: string[]): string | null {
 function printSummary(
   attempted: Set<string>,
   counts: Record<TerminalOutcome, number>,
-  erroredNodes: Set<string>
+  erroredNodes: Set<string>,
 ): void {
   process.stdout.write(
     JSON.stringify({
@@ -79,7 +108,7 @@ function printSummary(
       asked_user: counts.asked_user,
       errored: counts.errored,
       errored_node_ids: [...erroredNodes],
-    }) + "\n"
+    }) + "\n",
   );
 }
 
@@ -88,7 +117,11 @@ async function main(): Promise<void> {
   const attempted = new Set<string>();
   const erroredNodes = new Set<string>();
   const apiRetries = new Map<string, number>();
-  const counts: Record<TerminalOutcome, number> = { completed: 0, asked_user: 0, errored: 0 };
+  const counts: Record<TerminalOutcome, number> = {
+    completed: 0,
+    asked_user: 0,
+    errored: 0,
+  };
 
   let stopping = false;
   for (const sig of ["SIGINT", "SIGTERM"] as const) {
@@ -107,13 +140,17 @@ async function main(): Promise<void> {
       log(`aborting: ${error}`);
       break;
     }
-    const next = recommended.find((t) => !attempted.has(t.id) && !erroredNodes.has(t.id));
+    const next = recommended.find(
+      (t) => !attempted.has(t.id) && !erroredNodes.has(t.id),
+    );
     if (!next) {
       if (idleSince === null) idleSince = nowS();
       if (nowS() - idleSince >= IDLE_SHUTDOWN_S) {
         // exit 0 is the stop signal; deploy/supervisor-loop.service turns it into an
         // actual VM stop (ExecStopPost poweroff). AgentJira node 86295af4.
-        log(`idle ${IDLE_SHUTDOWN_S}s with nothing in progress — shutting down (exit 0 signals VM stop)`);
+        log(
+          `idle ${IDLE_SHUTDOWN_S}s with nothing in progress — shutting down (exit 0 signals VM stop)`,
+        );
         break;
       }
       log(`idle — no recommended task; sleeping ${IDLE_INTERVAL_S}s`);
@@ -127,7 +164,10 @@ async function main(): Promise<void> {
     const { outcome, detail, reset_at } = await runNode(next.id);
 
     if (outcome === "usage_limited") {
-      const target = reset_at != null ? reset_at + RESET_MARGIN_S : nowS() + LIMIT_COOLDOWN_S;
+      const target =
+        reset_at != null
+          ? reset_at + RESET_MARGIN_S
+          : nowS() + LIMIT_COOLDOWN_S;
       const waitS = Math.max(0, target - nowS());
       log(`${next.id} usage-limited; sleeping ${waitS}s until reset`);
       await sleepMs(waitS * 1000);
@@ -139,7 +179,9 @@ async function main(): Promise<void> {
       if (n < MAX_RETRIES) {
         apiRetries.set(next.id, n + 1);
         const ms = apiBackoffMs(n);
-        log(`${next.id} api-error; backoff ${ms}ms (retry ${n + 1}/${MAX_RETRIES})`);
+        log(
+          `${next.id} api-error; backoff ${ms}ms (retry ${n + 1}/${MAX_RETRIES})`,
+        );
         await sleepMs(ms);
         continue;
       }
