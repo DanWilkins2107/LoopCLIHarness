@@ -106,17 +106,69 @@ data "aws_iam_policy_document" "ci_apply" {
   }
 
   statement {
-    sid    = "Ec2Compute"
+    sid    = "Ec2Create"
     effect = "Allow"
     actions = [
+      "ec2:CreateVpc",
+      "ec2:CreateSubnet",
+      "ec2:CreateInternetGateway",
+      "ec2:CreateNatGateway",
+      "ec2:AllocateAddress",
+      "ec2:CreateRouteTable",
+      "ec2:CreateSecurityGroup",
+      "ec2:CreateLaunchTemplate",
       "ec2:RunInstances",
+    ]
+    resources = ["*"]
+  }
+
+  # The tag condition matches the root provider's default_tags Project tag
+  # (terraform/locals.tf name_prefix). Rename there -> rename var.name_prefix here.
+  statement {
+    sid    = "Ec2Manage"
+    effect = "Allow"
+    actions = [
+      "ec2:DeleteVpc",
+      "ec2:ModifyVpcAttribute",
+      "ec2:DeleteSubnet",
+      "ec2:ModifySubnetAttribute",
+      "ec2:AttachInternetGateway",
+      "ec2:DetachInternetGateway",
+      "ec2:DeleteInternetGateway",
+      "ec2:DeleteNatGateway",
+      "ec2:ReleaseAddress",
+      "ec2:CreateRoute",
+      "ec2:DeleteRoute",
+      "ec2:ReplaceRoute",
+      "ec2:AssociateRouteTable",
+      "ec2:DisassociateRouteTable",
+      "ec2:DeleteRouteTable",
+      "ec2:AuthorizeSecurityGroupIngress",
+      "ec2:AuthorizeSecurityGroupEgress",
+      "ec2:RevokeSecurityGroupIngress",
+      "ec2:RevokeSecurityGroupEgress",
+      "ec2:ModifySecurityGroupRules",
+      "ec2:DeleteSecurityGroup",
+      "ec2:CreateLaunchTemplateVersion",
+      "ec2:ModifyLaunchTemplate",
+      "ec2:DeleteLaunchTemplate",
+      "ec2:DeleteLaunchTemplateVersions",
       "ec2:TerminateInstances",
       "ec2:StartInstances",
       "ec2:StopInstances",
       "ec2:RebootInstances",
       "ec2:ModifyInstanceAttribute",
+      "ec2:AssociateIamInstanceProfile",
+      "ec2:ReplaceIamInstanceProfileAssociation",
+      "ec2:DisassociateIamInstanceProfile",
     ]
     resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.name_prefix]
+    }
   }
 
   statement {
@@ -127,14 +179,77 @@ data "aws_iam_policy_document" "ci_apply" {
   }
 
   statement {
-    sid    = "Ec2Keys"
+    sid    = "IamRole"
     effect = "Allow"
     actions = [
-      "ec2:CreateKeyPair",
-      "ec2:ImportKeyPair",
-      "ec2:DeleteKeyPair",
+      "iam:CreateRole",
+      "iam:DeleteRole",
+      "iam:GetRole",
+      "iam:TagRole",
+      "iam:UntagRole",
+      "iam:ListRoleTags",
+      "iam:UpdateAssumeRolePolicy",
+      "iam:ListAttachedRolePolicies",
+      "iam:ListRolePolicies",
+      "iam:ListInstanceProfilesForRole",
     ]
-    resources = ["*"]
+    resources = ["arn:aws:iam::${var.account_id}:role/${var.name_prefix}-*"]
+  }
+
+  # No iam:PutRolePolicy anywhere: inline-policy write plus PassRole would let CI
+  # mint an admin role and hand it to EC2. Attach is pinned to the one managed
+  # policy the root config uses.
+  statement {
+    sid       = "IamRoleAttach"
+    effect    = "Allow"
+    actions   = ["iam:AttachRolePolicy", "iam:DetachRolePolicy"]
+    resources = ["arn:aws:iam::${var.account_id}:role/${var.name_prefix}-*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PolicyARN"
+      values   = ["arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"]
+    }
+  }
+
+  statement {
+    sid    = "IamInstanceProfile"
+    effect = "Allow"
+    actions = [
+      "iam:CreateInstanceProfile",
+      "iam:DeleteInstanceProfile",
+      "iam:GetInstanceProfile",
+      "iam:AddRoleToInstanceProfile",
+      "iam:RemoveRoleFromInstanceProfile",
+      "iam:TagInstanceProfile",
+      "iam:UntagInstanceProfile",
+      "iam:ListInstanceProfileTags",
+    ]
+    resources = ["arn:aws:iam::${var.account_id}:instance-profile/${var.name_prefix}-*"]
+  }
+
+  # Bounded twice — ARN prefix and target service. Unbounded PassRole is the
+  # privilege-escalation path.
+  statement {
+    sid       = "IamPassRole"
+    effect    = "Allow"
+    actions   = ["iam:PassRole"]
+    resources = ["arn:aws:iam::${var.account_id}:role/${var.name_prefix}-*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["ec2.amazonaws.com"]
+    }
+  }
+
+  # The role/${var.name_prefix}-* prefix above otherwise reaches the CI roles
+  # themselves, letting CI widen its own policy.
+  statement {
+    sid       = "DenyCiSelfManage"
+    effect    = "Deny"
+    actions   = ["iam:*"]
+    resources = ["arn:aws:iam::${var.account_id}:role/${var.name_prefix}-ci-*"]
   }
 }
 
