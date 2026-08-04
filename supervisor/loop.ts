@@ -96,110 +96,186 @@ function parseProjectArg(argv: string[]): string | null {
   process.exit(2);
 }
 
-function printSummary(
-  attempted: Set<string>,
-  counts: Record<TerminalOutcome, number>,
-  erroredNodes: Set<string>,
-): void {
+interface Tally {
+  attempted: Set<string>;
+  erroredNodes: Set<string>;
+  apiRetries: Map<string, number>;
+  counts: Record<TerminalOutcome, number>;
+}
+
+function newTally(): Tally {
+  return {
+    attempted: new Set(),
+    erroredNodes: new Set(),
+    apiRetries: new Map(),
+    counts: { completed: 0, asked_user: 0, errored: 0 },
+  };
+}
+
+function printSummary(tally: Tally): void {
   process.stdout.write(
     JSON.stringify({
-      attempted: attempted.size,
-      completed: counts.completed,
-      asked_user: counts.asked_user,
-      errored: counts.errored,
-      errored_node_ids: [...erroredNodes],
+      attempted: tally.attempted.size,
+      completed: tally.counts.completed,
+      asked_user: tally.counts.asked_user,
+      errored: tally.counts.errored,
+      errored_node_ids: [...tally.erroredNodes],
     }) + "\n",
   );
 }
 
-async function main(): Promise<void> {
-  const projectId = parseProjectArg(process.argv.slice(2));
-  const attempted = new Set<string>();
-  const erroredNodes = new Set<string>();
-  const apiRetries = new Map<string, number>();
-  const counts: Record<TerminalOutcome, number> = {
-    completed: 0,
-    asked_user: 0,
-    errored: 0,
-  };
-
-  let stopping = false;
+function onStopSignal(stop: () => void): void {
   for (const sig of ["SIGINT", "SIGTERM"] as const) {
     process.on(sig, () => {
       log(`${sig} received — stopping after current node`);
-      stopping = true;
+      stop();
     });
   }
+}
+
+async function waitOutUsageLimit(
+  nodeId: string,
+  resetAt: number | undefined,
+): Promise<void> {
+  const target =
+    resetAt != null ? resetAt + RESET_MARGIN_S : nowS() + LIMIT_COOLDOWN_S;
+  const waitS = Math.max(0, target - nowS());
+  log(`${nodeId} usage-limited; sleeping ${waitS}s until reset`);
+  await sleepMs(waitS * 1000);
+}
+
+async function backOffApiError(
+  nodeId: string,
+  apiRetries: Map<string, number>,
+): Promise<boolean> {
+  const n = apiRetries.get(nodeId) ?? 0;
+  if (n >= MAX_RETRIES) return false;
+  apiRetries.set(nodeId, n + 1);
+  const ms = apiBackoffMs(n);
+  log(`${nodeId} api-error; backoff ${ms}ms (retry ${n + 1}/${MAX_RETRIES})`);
+  await sleepMs(ms);
+  return true;
+}
+
+function recordTerminal(
+  tally: Tally,
+  nodeId: string,
+  outcome: TerminalOutcome,
+  detail: string,
+): void {
+  tally.apiRetries.delete(nodeId);
+  tally.counts[outcome] += 1;
+  tally.attempted.add(nodeId);
+  if (outcome === "errored") tally.erroredNodes.add(nodeId);
+  log(`${nodeId} -> ${outcome} (${detail})`);
+}
+
+async function handleOutcome(
+  tally: Tally,
+  nodeId: string,
+  {
+    outcome,
+    detail,
+    reset_at,
+  }: { outcome: Outcome; detail: string; reset_at?: number },
+): Promise<void> {
+  if (outcome === "usage_limited") return waitOutUsageLimit(nodeId, reset_at);
+  if (outcome !== "api_error")
+    return recordTerminal(tally, nodeId, outcome, detail);
+  if (await backOffApiError(nodeId, tally.apiRetries)) return;
+  log(`${nodeId} api-error; exhausted ${MAX_RETRIES} retries — errored`);
+  tally.counts.errored += 1;
+  tally.erroredNodes.add(nodeId);
+  tally.apiRetries.delete(nodeId);
+}
+
+interface IdleTimer {
+  wait: (attempted: Set<string>) => Promise<boolean>;
+  reset: () => void;
+}
+
+// wait() resolves true when the idle window has expired and the loop should stop.
+function makeIdleTimer(): IdleTimer {
+  let since: number | null = null;
+  return {
+    wait: (attempted) => {
+      since ??= nowS();
+      return waitWhileIdle(since, attempted);
+    },
+    reset: () => {
+      since = null;
+    },
+  };
+}
+
+async function waitWhileIdle(
+  idleSince: number,
+  attempted: Set<string>,
+): Promise<boolean> {
+  if (nowS() - idleSince >= IDLE_SHUTDOWN_S) {
+    // exit 0 is the stop signal; deploy/supervisor-loop.service turns it into an
+    // actual VM stop (ExecStopPost poweroff). AgentJira node 86295af4.
+    log(
+      `idle ${IDLE_SHUTDOWN_S}s with nothing in progress — shutting down (exit 0 signals VM stop)`,
+    );
+    return true;
+  }
+  log(`idle — no recommended task; sleeping ${IDLE_INTERVAL_S}s`);
+  attempted.clear();
+  await sleepMs(IDLE_INTERVAL_S * 1000);
+  return false;
+}
+
+function pickNext(
+  recommended: RecommendedTask[],
+  tally: Tally,
+): RecommendedTask | undefined {
+  return recommended.find(
+    (t) => !tally.attempted.has(t.id) && !tally.erroredNodes.has(t.id),
+  );
+}
+
+function describe(task: RecommendedTask): string {
+  return task.title ? `${task.id} — ${task.title}` : task.id;
+}
+
+// Resolves false when the loop should stop.
+async function runOnce(
+  projectId: string | null,
+  tally: Tally,
+  idle: IdleTimer,
+): Promise<boolean> {
+  const { data: recommended, error } = await fetchRecommended(projectId);
+  if (error !== null) {
+    log(`aborting: ${error}`);
+    return false;
+  }
+  const next = pickNext(recommended, tally);
+  if (!next) return !(await idle.wait(tally.attempted));
+
+  idle.reset();
+  log(`running ${describe(next)}`);
+  await handleOutcome(tally, next.id, await runNode(next.id));
+  return true;
+}
+
+async function main(): Promise<void> {
+  const projectId = parseProjectArg(process.argv.slice(2));
+  const tally = newTally();
+
+  let stopping = false;
+  onStopSignal(() => {
+    stopping = true;
+  });
 
   log(`starting${projectId ? ` (project ${projectId})` : ""}`);
 
-  let idleSince: number | null = null;
+  const idle = makeIdleTimer();
   while (!stopping) {
-    const { data: recommended, error } = await fetchRecommended(projectId);
-    if (error !== null) {
-      log(`aborting: ${error}`);
-      break;
-    }
-    const next = recommended.find(
-      (t) => !attempted.has(t.id) && !erroredNodes.has(t.id),
-    );
-    if (!next) {
-      if (idleSince === null) idleSince = nowS();
-      if (nowS() - idleSince >= IDLE_SHUTDOWN_S) {
-        // exit 0 is the stop signal; deploy/supervisor-loop.service turns it into an
-        // actual VM stop (ExecStopPost poweroff). AgentJira node 86295af4.
-        log(
-          `idle ${IDLE_SHUTDOWN_S}s with nothing in progress — shutting down (exit 0 signals VM stop)`,
-        );
-        break;
-      }
-      log(`idle — no recommended task; sleeping ${IDLE_INTERVAL_S}s`);
-      attempted.clear();
-      await sleepMs(IDLE_INTERVAL_S * 1000);
-      continue;
-    }
-    idleSince = null;
-
-    log(`running ${next.id}${next.title ? ` — ${next.title}` : ""}`);
-    const { outcome, detail, reset_at } = await runNode(next.id);
-
-    if (outcome === "usage_limited") {
-      const target =
-        reset_at != null
-          ? reset_at + RESET_MARGIN_S
-          : nowS() + LIMIT_COOLDOWN_S;
-      const waitS = Math.max(0, target - nowS());
-      log(`${next.id} usage-limited; sleeping ${waitS}s until reset`);
-      await sleepMs(waitS * 1000);
-      continue;
-    }
-
-    if (outcome === "api_error") {
-      const n = apiRetries.get(next.id) ?? 0;
-      if (n < MAX_RETRIES) {
-        apiRetries.set(next.id, n + 1);
-        const ms = apiBackoffMs(n);
-        log(
-          `${next.id} api-error; backoff ${ms}ms (retry ${n + 1}/${MAX_RETRIES})`,
-        );
-        await sleepMs(ms);
-        continue;
-      }
-      log(`${next.id} api-error; exhausted ${MAX_RETRIES} retries — errored`);
-      counts.errored += 1;
-      erroredNodes.add(next.id);
-      apiRetries.delete(next.id);
-      continue;
-    }
-
-    apiRetries.delete(next.id);
-    counts[outcome] += 1;
-    attempted.add(next.id);
-    if (outcome === "errored") erroredNodes.add(next.id);
-    log(`${next.id} -> ${outcome} (${detail})`);
+    if (!(await runOnce(projectId, tally, idle))) break;
   }
 
-  printSummary(attempted, counts, erroredNodes);
+  printSummary(tally);
   process.exit(0);
 }
 

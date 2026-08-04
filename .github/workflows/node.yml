@@ -5,6 +5,7 @@ on:
     paths:
       - 'runner/**'
       - 'supervisor/**'
+      - '.fallowrc.json'
       - '.github/workflows/node.yml'
 
 permissions:
@@ -58,6 +59,17 @@ jobs:
       - run: npm run lint
 
       - run: npm run format:check
+
+  complexity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: npx --yes fallow@3.10.0 health --complexity
 
   mutation:
     runs-on: ubuntu-latest
