@@ -10,6 +10,11 @@ variable "dns_resolver_cidr" {
   type = string
 }
 
+variable "repo_ref" {
+  type        = string
+  description = "Harness commit SHA or tag checked out into /opt/loopcliharness at boot"
+}
+
 variable "instance_type" {
   type    = string
   default = "t3.medium"

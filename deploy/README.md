@@ -2,17 +2,14 @@
 
 ## `supervisor-loop.service`
 
-Install steps for the systemd unit (behaviour is documented in the unit file itself).
-Assumes the repo checked out at `/opt/loopcliharness` with the supervisor toolchain
-installed:
+Behaviour is documented in the unit file itself. VM boot
+(`terraform/modules/vm/user-data.yaml.tftpl`) clones the repo to `/opt/loopcliharness`,
+installs both npm toolchains, and copies this unit into `/etc/systemd/system/` — it
+stops short of enabling it, so the box provisions without running work:
 
 ```sh
-cd /opt/loopcliharness/supervisor && npm install   # pulls tsx/typescript
-cp /opt/loopcliharness/deploy/supervisor-loop.service /etc/systemd/system/
-systemctl daemon-reload
 systemctl enable supervisor-loop.service            # run on boot
 ```
 
-`aj`, `claude`, and Node.js (>=18) must be on the system `PATH`. Provisioning the box,
-the install path, and the toolchain is owned by the VM/boot infra node (AgentJira
-`8276b707`).
+Enabling is owned by AgentJira `600ec9e2`. `aj` is not installed by boot yet (auth
+nodes `02ee3d7b` / `71dc00bb` / `95041f51`), so the loop cannot run until those land.
