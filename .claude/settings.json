@@ -4,10 +4,19 @@
       "source": {
         "source": "github",
         "repo": "DanWilkins2107/code-style"
-      }
+      },
+      "autoUpdate": true
+    },
+    "agentjira": {
+      "source": {
+        "source": "github",
+        "repo": "DanWilkins2107/AgentJira"
+      },
+      "autoUpdate": true
     }
   },
   "enabledPlugins": {
-    "code-style@code-style": true
+    "code-style@code-style": true,
+    "agentjira@agentjira": true
   }
 }
