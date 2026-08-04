@@ -20,3 +20,12 @@ runcmd:
   - DEBIAN_FRONTEND=noninteractive apt-get update
   - DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs gh
   - npm i -g @anthropic-ai/claude-code
+  - git clone --depth 1 https://github.com/DanWilkins2107/LoopCLIHarness.git /opt/loopcliharness
+  # ci not install: the committed lockfiles decide the tree.
+  # Dev dependencies are runtime here — both packages start via tsx.
+  - npm --prefix /opt/loopcliharness/runner ci
+  - npm --prefix /opt/loopcliharness/supervisor ci
+  # Placed, deliberately not enabled — the box must not start working on boot until
+  # auth and the self-stop wiring land (AgentJira 600ec9e2); see deploy/README.md.
+  - install -m 0644 /opt/loopcliharness/deploy/supervisor-loop.service /etc/systemd/system/supervisor-loop.service
+  - systemctl daemon-reload
