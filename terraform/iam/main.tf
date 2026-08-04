@@ -95,88 +95,11 @@ data "aws_iam_policy_document" "ci_plan" {
   }
 }
 
+# EC2 comes from the AmazonEC2FullAccess managed policy attached below. IAM
+# stays hand-written and scoped: managed policies only offer IAMFullAccess,
+# which grants the unbounded PassRole + PutRolePolicy this deliberately avoids.
 data "aws_iam_policy_document" "ci_apply" {
   source_policy_documents = [data.aws_iam_policy_document.state_access.json]
-
-  statement {
-    sid       = "Ec2Read"
-    effect    = "Allow"
-    actions   = ["ec2:Describe*", "ec2:Get*"]
-    resources = ["*"]
-  }
-
-  statement {
-    sid    = "Ec2Create"
-    effect = "Allow"
-    actions = [
-      "ec2:CreateVpc",
-      "ec2:CreateSubnet",
-      "ec2:CreateInternetGateway",
-      "ec2:CreateNatGateway",
-      "ec2:AllocateAddress",
-      "ec2:CreateRouteTable",
-      "ec2:CreateSecurityGroup",
-      "ec2:CreateLaunchTemplate",
-      "ec2:RunInstances",
-    ]
-    resources = ["*"]
-  }
-
-  # The tag condition matches the root provider's default_tags Project tag
-  # (terraform/locals.tf name_prefix). Rename there -> rename var.name_prefix here.
-  statement {
-    sid    = "Ec2Manage"
-    effect = "Allow"
-    actions = [
-      "ec2:DeleteVpc",
-      "ec2:ModifyVpcAttribute",
-      "ec2:DeleteSubnet",
-      "ec2:ModifySubnetAttribute",
-      "ec2:AttachInternetGateway",
-      "ec2:DetachInternetGateway",
-      "ec2:DeleteInternetGateway",
-      "ec2:DeleteNatGateway",
-      "ec2:ReleaseAddress",
-      "ec2:CreateRoute",
-      "ec2:DeleteRoute",
-      "ec2:ReplaceRoute",
-      "ec2:AssociateRouteTable",
-      "ec2:DisassociateRouteTable",
-      "ec2:DeleteRouteTable",
-      "ec2:AuthorizeSecurityGroupIngress",
-      "ec2:AuthorizeSecurityGroupEgress",
-      "ec2:RevokeSecurityGroupIngress",
-      "ec2:RevokeSecurityGroupEgress",
-      "ec2:ModifySecurityGroupRules",
-      "ec2:DeleteSecurityGroup",
-      "ec2:CreateLaunchTemplateVersion",
-      "ec2:ModifyLaunchTemplate",
-      "ec2:DeleteLaunchTemplate",
-      "ec2:DeleteLaunchTemplateVersions",
-      "ec2:TerminateInstances",
-      "ec2:StartInstances",
-      "ec2:StopInstances",
-      "ec2:RebootInstances",
-      "ec2:ModifyInstanceAttribute",
-      "ec2:AssociateIamInstanceProfile",
-      "ec2:ReplaceIamInstanceProfileAssociation",
-      "ec2:DisassociateIamInstanceProfile",
-    ]
-    resources = ["*"]
-
-    condition {
-      test     = "StringEquals"
-      variable = "aws:ResourceTag/Project"
-      values   = [var.name_prefix]
-    }
-  }
-
-  statement {
-    sid       = "Ec2Tagging"
-    effect    = "Allow"
-    actions   = ["ec2:CreateTags", "ec2:DeleteTags"]
-    resources = ["*"]
-  }
 
   statement {
     sid    = "IamRole"
@@ -273,4 +196,9 @@ resource "aws_iam_role_policy" "ci_apply" {
   name   = "${var.name_prefix}-ci-apply"
   role   = aws_iam_role.ci_apply.id
   policy = data.aws_iam_policy_document.ci_apply.json
+}
+
+resource "aws_iam_role_policy_attachment" "ci_apply_ec2" {
+  role       = aws_iam_role.ci_apply.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2FullAccess"
 }
