@@ -5,9 +5,11 @@ export const USAGE_EXIT = 2;
 
 export const CLAUDE_ARGS = [
   "--print",
-  "--permission-mode", "auto",
+  "--permission-mode",
+  "auto",
   "--no-session-persistence",
-  "--output-format", "json",
+  "--output-format",
+  "json",
 ];
 
 export function makeLog(prefix: string): (...args: string[]) => void {
@@ -19,21 +21,27 @@ export function makeLog(prefix: string): (...args: string[]) => void {
 export function emitResult(
   nodeId: string | null,
   exitCode: number,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
 ): never {
   process.stdout.write(JSON.stringify({ node_id: nodeId, ...payload }) + "\n");
   process.exit(exitCode);
 }
 
-export function preflight(): Promise<{ ok: true } | { ok: false; detail: string }> {
+export function preflight(): Promise<
+  { ok: true } | { ok: false; detail: string }
+> {
   return new Promise((resolve) => {
-    const child = spawnTool("aj", ["whoami", "--json"], ["ignore", "pipe", "pipe"]);
+    const child = spawnTool(
+      "aj",
+      ["whoami", "--json"],
+      ["ignore", "pipe", "pipe"],
+    );
     let out = "";
     let err = "";
     child.stdout?.on("data", (d) => (out += d));
     child.stderr?.on("data", (d) => (err += d));
     child.on("error", (e) =>
-      resolve({ ok: false, detail: `\`aj\` not runnable: ${e.message}` })
+      resolve({ ok: false, detail: `\`aj\` not runnable: ${e.message}` }),
     );
     child.on("close", (code) => {
       if (code !== 0) {
@@ -47,7 +55,10 @@ export function preflight(): Promise<{ ok: true } | { ok: false; detail: string 
         JSON.parse(out);
         resolve({ ok: true });
       } catch {
-        resolve({ ok: false, detail: "`aj whoami` returned unparseable output" });
+        resolve({
+          ok: false,
+          detail: "`aj whoami` returned unparseable output",
+        });
       }
     });
   });

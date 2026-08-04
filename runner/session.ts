@@ -1,10 +1,18 @@
-import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
+import {
+  spawn,
+  type ChildProcess,
+  type StdioOptions,
+} from "node:child_process";
 
 // Generic session-spawn plumbing shared by the runner entrypoints
 // (`run-task`, `run-judge`). Nothing task- or judge-specific lives here — just
 // the spawn and the stdout/stderr wiring both entrypoints reuse.
 
-export function spawnTool(bin: string, args: string[], stdio: StdioOptions): ChildProcess {
+export function spawnTool(
+  bin: string,
+  args: string[],
+  stdio: StdioOptions,
+): ChildProcess {
   return spawn(bin, args, { stdio });
 }
 

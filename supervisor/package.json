@@ -8,6 +8,9 @@
     "start": "tsx loop.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format:check": "prettier --check \"**/*.ts\"",
+    "format": "prettier --write \"**/*.ts\"",
     "mutation": "stryker run"
   },
   "engines": {
@@ -17,8 +20,11 @@
     "@stryker-mutator/core": "^9.6.1",
     "@stryker-mutator/vitest-runner": "^9.6.1",
     "@types/node": "^20.11.0",
+    "eslint": "^10.8.0",
+    "prettier": "^3.9.6",
     "tsx": "^4.7.0",
     "typescript": "^5.4.0",
+    "typescript-eslint": "^8.65.0",
     "vitest": "^4.1.10"
   }
 }

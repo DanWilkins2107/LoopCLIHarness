@@ -7,7 +7,10 @@ describe("extractVerdict", () => {
       'Thinking out loud: {"verdict": "proceed", "reason": "early guess"}',
       '{"node_id": "abc", "verdict": "not_yet", "reason": "still unsettled"}',
     ].join("\n");
-    expect(extractVerdict(text)).toEqual({ verdict: "not_yet", reason: "still unsettled" });
+    expect(extractVerdict(text)).toEqual({
+      verdict: "not_yet",
+      reason: "still unsettled",
+    });
   });
 
   it("skips malformed candidates and falls back to an earlier valid one", () => {
@@ -15,11 +18,16 @@ describe("extractVerdict", () => {
       '{"verdict": "not_yet", "reason": "unsettled"}',
       '{"verdict": "proceed", reason: not-json}',
     ].join("\n");
-    expect(extractVerdict(text)).toEqual({ verdict: "not_yet", reason: "unsettled" });
+    expect(extractVerdict(text)).toEqual({
+      verdict: "not_yet",
+      reason: "unsettled",
+    });
   });
 
   it("rejects an unrecognised verdict string", () => {
-    expect(extractVerdict('{"verdict": "maybe", "reason": "unsure"}')).toBeNull();
+    expect(
+      extractVerdict('{"verdict": "maybe", "reason": "unsure"}'),
+    ).toBeNull();
   });
 
   it("returns null when there is no verdict object at all", () => {
@@ -38,6 +46,8 @@ describe("extractVerdict", () => {
   });
 
   it("trims the reason", () => {
-    expect(extractVerdict('{"verdict": "proceed", "reason": "  settled  "}')?.reason).toBe("settled");
+    expect(
+      extractVerdict('{"verdict": "proceed", "reason": "  settled  "}')?.reason,
+    ).toBe("settled");
   });
 });
