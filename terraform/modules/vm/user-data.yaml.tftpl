@@ -22,9 +22,10 @@ runcmd:
   - npm i -g @anthropic-ai/claude-code
   - git clone https://github.com/DanWilkins2107/LoopCLIHarness.git /opt/loopcliharness
   - git -C /opt/loopcliharness checkout ${repo_ref}
-  # Dev dependencies are runtime here: both packages start via tsx.
-  - npm --prefix /opt/loopcliharness/runner install
-  - npm --prefix /opt/loopcliharness/supervisor install
+  # ci not install: the checkout is pinned, so the lockfiles decide the tree.
+  # Dev dependencies are runtime here — both packages start via tsx.
+  - npm --prefix /opt/loopcliharness/runner ci
+  - npm --prefix /opt/loopcliharness/supervisor ci
   # Placed, deliberately not enabled — the box must not start working on boot until
   # auth and the self-stop wiring land (AgentJira 600ec9e2); see deploy/README.md.
   - install -m 0644 /opt/loopcliharness/deploy/supervisor-loop.service /etc/systemd/system/supervisor-loop.service
