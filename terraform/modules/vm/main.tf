@@ -11,11 +11,6 @@ resource "aws_security_group" "vm" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Ubuntu 24.04 ships plain-http apt sources (regional ec2.archive.ubuntu.com,
-  # security.ubuntu.com), so without this nothing installs at boot. Destination
-  # is the open internet because those mirrors are a rotating public pool
-  # reached over NAT; egress restriction proper is host-level (nftables +
-  # allowlist proxy), not this SG.
   egress {
     description = "apt over http"
     from_port   = 80
@@ -98,7 +93,7 @@ resource "aws_launch_template" "vm" {
   vpc_security_group_ids               = [aws_security_group.vm.id]
 
   # Readable from IMDS by anything on the box — never put secrets here.
-  user_data = base64encode(templatefile("${path.module}/cloud-init.yaml.tftpl", {}))
+  user_data = base64encode(templatefile("${path.module}/user-data.yaml.tftpl", {}))
 
   iam_instance_profile {
     arn = aws_iam_instance_profile.vm.arn
