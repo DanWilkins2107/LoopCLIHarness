@@ -6,10 +6,10 @@ export function extractVerdict(
 ): { verdict: Verdict; reason: string } | null {
   const matches = text.match(/\{[^{}]*"verdict"[^{}]*\}/g);
   if (!matches) return null;
-  for (let i = matches.length - 1; i >= 0; i--) {
+  for (const candidate of matches.reverse()) {
     try {
-      const obj = JSON.parse(matches[i]);
-      if (obj?.verdict === "proceed" || obj?.verdict === "not_yet") {
+      const obj = JSON.parse(candidate);
+      if (obj.verdict === "proceed" || obj.verdict === "not_yet") {
         const reason =
           typeof obj.reason === "string" && obj.reason.trim()
             ? obj.reason.trim()

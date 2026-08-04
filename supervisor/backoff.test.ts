@@ -1,8 +1,25 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { apiBackoffMs } from "./backoff";
+import { apiBackoffMs, sleepMs } from "./backoff";
 import { BACKOFF_BASE_S, BACKOFF_CAP_S, BACKOFF_JITTER } from "./constants";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
+
+describe("sleepMs", () => {
+  it("resolves only once the timer has run out", async () => {
+    vi.useFakeTimers();
+    let slept = false;
+    void sleepMs(50).then(() => {
+      slept = true;
+    });
+    await vi.advanceTimersByTimeAsync(49);
+    expect(slept).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(slept).toBe(true);
+  });
+});
 
 describe("apiBackoffMs", () => {
   it("doubles with each attempt", () => {

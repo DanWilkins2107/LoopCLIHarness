@@ -41,7 +41,17 @@ describe("classifyError", () => {
   });
 
   it("scans back past trailing junk to the last valid envelope", () => {
-    const stdout = [envelope("read ECONNRESET"), "not json", "  "].join("\n");
+    const stdout = [
+      envelope("read ECONNRESET"),
+      JSON.stringify({ is_error: true }),
+      "not json",
+      "  ",
+    ].join("\n");
+    expect(classifyError(stdout)).toEqual({ outcome: "api_error" });
+  });
+
+  it("handles CRLF line endings", () => {
+    const stdout = ["not json", envelope("read ECONNRESET")].join("\r\n");
     expect(classifyError(stdout)).toEqual({ outcome: "api_error" });
   });
 });

@@ -114,7 +114,16 @@ describe("buildBwrapArgs", () => {
         return true;
       },
     });
-    expect(probed.length).toBeGreaterThan(0);
+    expect(probed).toEqual([
+      "/usr",
+      "/bin",
+      "/sbin",
+      "/lib",
+      "/lib32",
+      "/lib64",
+      "/etc",
+      "/opt",
+    ]);
     expect(countOf(args, "--ro-bind")).toBe(probed.length);
     for (const p of probed)
       expect(hasSeq(args, ["--ro-bind", p, p])).toBe(true);
@@ -137,31 +146,66 @@ describe("parseSandboxEnv", () => {
     });
   });
 
+  it("keeps NO_PROXY when supplied, trimmed", () => {
+    expect(
+      parseSandboxEnv({
+        LOOP_SESSION_PROXY: PROXY,
+        LOOP_SESSION_WORKDIR: WORKDIR,
+        NO_PROXY: "  localhost,127.0.0.1  ",
+      }),
+    ).toEqual({
+      ok: true,
+      env: {
+        LOOP_SESSION_PROXY: PROXY,
+        LOOP_SESSION_WORKDIR: WORKDIR,
+        NO_PROXY: "localhost,127.0.0.1",
+      },
+    });
+  });
+
+  const detailOf = (raw: NodeJS.ProcessEnv): string => {
+    const result = parseSandboxEnv(raw);
+    if (result.ok) throw new Error("expected a rejection");
+    return result.detail;
+  };
+
   it.each([
     [
       "a malformed proxy URL",
       { LOOP_SESSION_PROXY: "127.0.0.1:3128", LOOP_SESSION_WORKDIR: WORKDIR },
+      "LOOP_SESSION_PROXY: must be a proxy URL, e.g. http://127.0.0.1:3128",
     ],
-    ["a missing proxy URL", { LOOP_SESSION_WORKDIR: WORKDIR }],
-  ])("rejects %s, naming the field", (_label, raw) => {
-    const result = parseSandboxEnv(raw);
-    expect(result.ok).toBe(false);
-    expect(result.ok === false && result.detail).toContain(
-      "LOOP_SESSION_PROXY",
-    );
-  });
-
-  it.each([
+    [
+      "a missing proxy URL",
+      { LOOP_SESSION_WORKDIR: WORKDIR },
+      "LOOP_SESSION_PROXY: must be a proxy URL, e.g. http://127.0.0.1:3128",
+    ],
     [
       "a blank workdir",
       { LOOP_SESSION_PROXY: PROXY, LOOP_SESSION_WORKDIR: "   " },
+      "LOOP_SESSION_WORKDIR: must be a non-empty path",
     ],
-    ["a missing workdir", { LOOP_SESSION_PROXY: PROXY }],
-  ])("rejects %s, naming the field", (_label, raw) => {
-    const result = parseSandboxEnv(raw);
-    expect(result.ok).toBe(false);
-    expect(result.ok === false && result.detail).toContain(
-      "LOOP_SESSION_WORKDIR",
+    [
+      "a missing workdir",
+      { LOOP_SESSION_PROXY: PROXY },
+      "LOOP_SESSION_WORKDIR: must be a path",
+    ],
+    [
+      "a blank NO_PROXY",
+      {
+        LOOP_SESSION_PROXY: PROXY,
+        LOOP_SESSION_WORKDIR: WORKDIR,
+        NO_PROXY: "   ",
+      },
+      "NO_PROXY: Too small: expected string to have >=1 characters",
+    ],
+  ])("rejects %s, naming the field", (_label, raw, detail) => {
+    expect(detailOf(raw)).toBe(detail);
+  });
+
+  it("joins every issue into one detail line", () => {
+    expect(detailOf({})).toBe(
+      "LOOP_SESSION_PROXY: must be a proxy URL, e.g. http://127.0.0.1:3128; LOOP_SESSION_WORKDIR: must be a path",
     );
   });
 });
