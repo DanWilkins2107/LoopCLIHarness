@@ -10,8 +10,8 @@
   // silently act as a max-cyclomatic of 5. Once the Coverage gate lands, pass
   // --coverage (Istanbul, not v8) and drop this to 30 for a real risk gate.
   "health": {
-    "maxCyclomatic": 10,
-    "maxCognitive": 11,
+    "maxCyclomatic": 5,
+    "maxCognitive": 5,
     "maxCrap": 1000
   }
 }
