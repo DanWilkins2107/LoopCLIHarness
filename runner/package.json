@@ -8,15 +8,21 @@
     "start": "tsx run-task.ts",
     "judge": "tsx run-judge.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format:check": "prettier --check \"**/*.ts\"",
+    "format": "prettier --write \"**/*.ts\""
   },
   "engines": {
     "node": ">=18"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
+    "eslint": "^10.8.0",
+    "prettier": "^3.9.6",
     "tsx": "^4.7.0",
     "typescript": "^5.4.0",
+    "typescript-eslint": "^8.65.0",
     "vitest": "^4.1.10"
   },
   "dependencies": {

@@ -5,7 +5,9 @@ const envelope = (result: string) => JSON.stringify({ result });
 
 describe("classifyError", () => {
   it("extracts reset_at from a usage-limit result", () => {
-    expect(classifyError(envelope("Claude AI usage limit reached|1712345678"))).toEqual({
+    expect(
+      classifyError(envelope("Claude AI usage limit reached|1712345678")),
+    ).toEqual({
       outcome: "usage_limited",
       reset_at: 1712345678,
     });
