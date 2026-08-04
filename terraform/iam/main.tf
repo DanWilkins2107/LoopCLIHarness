@@ -95,9 +95,6 @@ data "aws_iam_policy_document" "ci_plan" {
   }
 }
 
-# EC2 comes from the AmazonEC2FullAccess managed policy attached below. IAM
-# stays hand-written and scoped: managed policies only offer IAMFullAccess,
-# which grants the unbounded PassRole + PutRolePolicy this deliberately avoids.
 data "aws_iam_policy_document" "ci_apply" {
   source_policy_documents = [data.aws_iam_policy_document.state_access.json]
 
@@ -119,9 +116,6 @@ data "aws_iam_policy_document" "ci_apply" {
     resources = ["arn:aws:iam::${var.account_id}:role/${var.name_prefix}-*"]
   }
 
-  # No iam:PutRolePolicy anywhere: inline-policy write plus PassRole would let CI
-  # mint an admin role and hand it to EC2. Attach is pinned to the one managed
-  # policy the root config uses.
   statement {
     sid       = "IamRoleAttach"
     effect    = "Allow"
@@ -151,8 +145,6 @@ data "aws_iam_policy_document" "ci_apply" {
     resources = ["arn:aws:iam::${var.account_id}:instance-profile/${var.name_prefix}-*"]
   }
 
-  # Bounded twice — ARN prefix and target service. Unbounded PassRole is the
-  # privilege-escalation path.
   statement {
     sid       = "IamPassRole"
     effect    = "Allow"
@@ -166,8 +158,6 @@ data "aws_iam_policy_document" "ci_apply" {
     }
   }
 
-  # The role/${var.name_prefix}-* prefix above otherwise reaches the CI roles
-  # themselves, letting CI widen its own policy.
   statement {
     sid       = "DenyCiSelfManage"
     effect    = "Deny"
