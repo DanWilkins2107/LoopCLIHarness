@@ -9,16 +9,20 @@ const USAGE_LIMIT_RE = /Claude AI usage limit reached\|(\d+)/;
 const API_ERROR_RE =
   /overloaded_error|(?:\b|_)529\b|\b5\d\d\b|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|connection error|network error/i;
 
+function resultField(line: string): string | null {
+  try {
+    const env = JSON.parse(line);
+    return typeof env?.result === "string" ? env.result : null;
+  } catch {
+    return null;
+  }
+}
+
 function lastResult(stdout: string): string | null {
-  const lines = stdout.trim().split(/\r?\n/);
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i].trim();
-    if (!line) continue;
-    try {
-      const env = JSON.parse(line);
-      if (env && typeof env === "object" && typeof env.result === "string")
-        return env.result;
-    } catch {}
+  const lines = stdout.trim().split(/\r?\n/).reverse();
+  for (const line of lines) {
+    const result = resultField(line);
+    if (result !== null) return result;
   }
   return null;
 }
