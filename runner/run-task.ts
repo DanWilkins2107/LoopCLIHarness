@@ -66,9 +66,9 @@ function runSession(
   );
   return new Promise((resolve) => {
     const child = spawnTool("bwrap", bwrapArgs, ["pipe", "pipe", "pipe"]);
-    child.stdin?.on("error", () => {});
-    child.stdin?.write(buildPrompt(nodeId));
-    child.stdin?.end();
+    child.stdin!.on("error", () => {});
+    child.stdin!.write(buildPrompt(nodeId));
+    child.stdin!.end();
 
     const getStdout = wireSessionOutput(child);
 
@@ -97,7 +97,7 @@ function sandboxPreflight(): Promise<
       ["ignore", "ignore", "pipe"],
     );
     let err = "";
-    child.stderr?.on("data", (d) => (err += d));
+    child.stderr!.on("data", (d) => (err += d));
     child.on("error", (e) =>
       resolve({
         ok: false,
@@ -123,8 +123,8 @@ function queryNodeStatus(nodeId: string): Promise<string | null> {
       ["ignore", "pipe", "pipe"],
     );
     let out = "";
-    child.stdout?.on("data", (d) => (out += d));
-    child.stderr?.on("data", (d) => process.stderr.write(d));
+    child.stdout!.on("data", (d) => (out += d));
+    child.stderr!.on("data", (d) => process.stderr.write(d));
     child.on("error", () => resolve(null));
     child.on("close", () => {
       try {

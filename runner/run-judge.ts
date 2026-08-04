@@ -64,9 +64,9 @@ function runSession(nodeId: string): Promise<{
 }> {
   return new Promise((resolve) => {
     const child = spawnTool("claude", CLAUDE_ARGS, ["pipe", "pipe", "pipe"]);
-    child.stdin?.on("error", () => {});
-    child.stdin?.write(buildPrompt(nodeId));
-    child.stdin?.end();
+    child.stdin!.on("error", () => {});
+    child.stdin!.write(buildPrompt(nodeId));
+    child.stdin!.end();
 
     const getStdout = wireSessionOutput(child);
 

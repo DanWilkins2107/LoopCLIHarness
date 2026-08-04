@@ -22,11 +22,11 @@ export function spawnTool(
 // result line.
 export function wireSessionOutput(child: ChildProcess): () => string {
   let stdout = "";
-  child.stdout?.on("data", (d) => {
+  child.stdout!.on("data", (d) => {
     stdout += d;
     process.stderr.write(d);
   });
-  child.stderr?.on("data", (d) => process.stderr.write(d));
+  child.stderr!.on("data", (d) => process.stderr.write(d));
   return () => stdout;
 }
 

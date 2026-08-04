@@ -38,8 +38,8 @@ export function preflight(): Promise<
     );
     let out = "";
     let err = "";
-    child.stdout?.on("data", (d) => (out += d));
-    child.stderr?.on("data", (d) => (err += d));
+    child.stdout!.on("data", (d) => (out += d));
+    child.stderr!.on("data", (d) => (err += d));
     child.on("error", (e) =>
       resolve({ ok: false, detail: `\`aj\` not runnable: ${e.message}` }),
     );

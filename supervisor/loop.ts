@@ -36,8 +36,8 @@ function fetchRecommended(
   return new Promise((done) => {
     const child = spawn("aj", args, { stdio: ["ignore", "pipe", "pipe"] });
     let out = "";
-    child.stdout?.on("data", (d) => (out += d));
-    child.stderr?.on("data", (d) => process.stderr.write(d));
+    child.stdout!.on("data", (d) => (out += d));
+    child.stderr!.on("data", (d) => process.stderr.write(d));
     child.on("error", (e) =>
       done({ data: null, error: `aj tasks not runnable: ${e.message}` }),
     );
@@ -64,8 +64,8 @@ function runNode(
       stdio: ["ignore", "pipe", "pipe"],
     });
     let out = "";
-    child.stdout?.on("data", (d) => (out += d));
-    child.stderr?.on("data", (d) => process.stderr.write(d));
+    child.stdout!.on("data", (d) => (out += d));
+    child.stderr!.on("data", (d) => process.stderr.write(d));
     child.on("error", (e) =>
       done({
         outcome: "errored",
