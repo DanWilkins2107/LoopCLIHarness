@@ -93,9 +93,7 @@ resource "aws_launch_template" "vm" {
   vpc_security_group_ids               = [aws_security_group.vm.id]
 
   # Readable from IMDS by anything on the box — never put secrets here.
-  user_data = base64encode(templatefile("${path.module}/user-data.yaml.tftpl", {
-    repo_ref = var.repo_ref
-  }))
+  user_data = base64encode(templatefile("${path.module}/user-data.yaml.tftpl", {}))
 
   iam_instance_profile {
     arn = aws_iam_instance_profile.vm.arn

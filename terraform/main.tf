@@ -8,5 +8,4 @@ module "vm" {
   name              = local.name_prefix
   vpc_id            = module.network.vpc_id
   dns_resolver_cidr = module.network.dns_resolver_cidr
-  repo_ref          = local.repo_ref
 }
