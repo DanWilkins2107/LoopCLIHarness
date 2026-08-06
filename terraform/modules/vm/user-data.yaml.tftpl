@@ -1,0 +1,31 @@
+#cloud-config
+package_update: true
+packages:
+  - git
+  - bubblewrap
+  - ca-certificates
+  - curl
+  - gnupg
+
+runcmd:
+  - set -eux
+  - install -m 0755 -d /etc/apt/keyrings
+  # apt reads an ASCII-armored key directly when the file is named .asc, so the
+  # NodeSource key needs no dearmor step; GitHub already publishes binary.
+  - curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o /etc/apt/keyrings/nodesource.asc
+  - curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli.gpg
+  - chmod 0644 /etc/apt/keyrings/nodesource.asc /etc/apt/keyrings/githubcli.gpg
+  - echo "deb [signed-by=/etc/apt/keyrings/nodesource.asc] https://deb.nodesource.com/node_22.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
+  - echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/githubcli.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
+  - DEBIAN_FRONTEND=noninteractive apt-get update
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs gh
+  - npm i -g @anthropic-ai/claude-code
+  - git clone --depth 1 https://github.com/DanWilkins2107/LoopCLIHarness.git /opt/loopcliharness
+  # ci not install: the committed lockfiles decide the tree.
+  # Dev dependencies are runtime here — both packages start via tsx.
+  - npm --prefix /opt/loopcliharness/runner ci
+  - npm --prefix /opt/loopcliharness/supervisor ci
+  # Placed, deliberately not enabled — the box must not start working on boot until
+  # auth and the self-stop wiring land (AgentJira 600ec9e2); see deploy/README.md.
+  - install -m 0644 /opt/loopcliharness/deploy/supervisor-loop.service /etc/systemd/system/supervisor-loop.service
+  - systemctl daemon-reload

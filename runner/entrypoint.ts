@@ -12,6 +12,14 @@ export const CLAUDE_ARGS = [
   "json",
 ];
 
+export function parseNodeIdArg(argv: string[], printUsage: () => void): string {
+  if (argv.length === 0 || argv[0] === "-h" || argv[0] === "--help") {
+    printUsage();
+    process.exit(argv.length === 0 ? USAGE_EXIT : 0);
+  }
+  return argv[0];
+}
+
 export function makeLog(prefix: string): (...args: string[]) => void {
   return (...args) => process.stderr.write(`[${prefix}] ${args.join(" ")}\n`);
 }

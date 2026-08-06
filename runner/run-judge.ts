@@ -2,9 +2,9 @@ import { spawn } from "node:child_process";
 import { wireSessionOutput, sessionReportedError } from "./session";
 import {
   CLAUDE_ARGS,
-  USAGE_EXIT,
   makeLog,
   emitResult,
+  parseNodeIdArg,
   preflight,
 } from "./entrypoint";
 import { extractVerdict, type Verdict } from "./verdict";
@@ -121,14 +121,12 @@ function printUsage(): void {
   );
 }
 
-async function main(): Promise<void> {
-  const argv = process.argv.slice(2);
-  if (argv.length === 0 || argv[0] === "-h" || argv[0] === "--help") {
-    printUsage();
-    process.exit(argv.length === 0 ? USAGE_EXIT : 0);
-  }
+function sessionErrorDetail(exitCode: number | null, isError: boolean): string {
+  return `session error (exit=${exitCode}${isError ? " is_error=true" : ""})`;
+}
 
-  const nodeId = argv[0];
+async function main(): Promise<void> {
+  const nodeId = parseNodeIdArg(process.argv.slice(2), printUsage);
   log(`judging node ${nodeId}`);
 
   const pre = await preflight();
@@ -142,7 +140,7 @@ async function main(): Promise<void> {
     emitAndExit(
       nodeId,
       "not_yet",
-      `session error (exit=${result.exitCode}${result.sessionIsError ? " is_error=true" : ""})`,
+      sessionErrorDetail(result.exitCode, result.sessionIsError),
     );
   }
 

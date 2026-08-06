@@ -1,12 +1,20 @@
 resource "aws_security_group" "vm" {
   name        = "${var.name}-vm"
-  description = "Base VM security group: no ingress, egress limited to SSM"
+  description = "Base VM security group: no ingress, egress limited to SSM, DNS and apt"
   vpc_id      = var.vpc_id
 
   egress {
     description = "SSM endpoints"
     from_port   = 443
     to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "apt over http"
+    from_port   = 80
+    to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -83,6 +91,9 @@ resource "aws_launch_template" "vm" {
 
   instance_initiated_shutdown_behavior = "terminate"
   vpc_security_group_ids               = [aws_security_group.vm.id]
+
+  # Readable from IMDS by anything on the box — never put secrets here.
+  user_data = base64encode(templatefile("${path.module}/user-data.yaml.tftpl", {}))
 
   iam_instance_profile {
     arn = aws_iam_instance_profile.vm.arn

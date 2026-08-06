@@ -3,12 +3,12 @@ import { wireSessionOutput, sessionReportedError } from "./session";
 import { parseSandboxEnv, buildBwrapArgs, type SandboxEnv } from "./sandbox";
 import {
   CLAUDE_ARGS,
-  USAGE_EXIT,
   makeLog,
   emitResult,
+  parseNodeIdArg,
   preflight,
 } from "./entrypoint";
-import { classifyError } from "./classify-error";
+import { classifyError, type EnvelopeClass } from "./classify-error";
 
 type Outcome =
   "completed" | "asked_user" | "errored" | "usage_limited" | "api_error";
@@ -135,6 +135,15 @@ function queryNodeStatus(nodeId: string): Promise<string | null> {
   });
 }
 
+function sessionErrorDetail(
+  exitCode: number | null,
+  sessionIsError: boolean,
+  postStatus: string | null,
+): string {
+  const isError = sessionIsError ? " is_error=true" : "";
+  return `session exit=${exitCode}${isError}, node status=${postStatus ?? "unknown"}`;
+}
+
 function classify(
   {
     exitCode,
@@ -145,7 +154,7 @@ function classify(
   if (exitCode !== 0 || sessionIsError) {
     return {
       outcome: "errored",
-      detail: `session exit=${exitCode}${sessionIsError ? " is_error=true" : ""}, node status=${postStatus ?? "unknown"}`,
+      detail: sessionErrorDetail(exitCode, sessionIsError, postStatus),
     };
   }
   if (postStatus == null) {
@@ -180,48 +189,41 @@ function printUsage(): void {
   );
 }
 
-async function main(): Promise<void> {
-  const argv = process.argv.slice(2);
-  if (argv.length === 0 || argv[0] === "-h" || argv[0] === "--help") {
-    printUsage();
-    process.exit(argv.length === 0 ? USAGE_EXIT : 0);
-  }
+function exitFailed(nodeId: string, stage: string, detail: string): never {
+  log(`${stage} failed: ${detail}`);
+  emitAndExit(nodeId, "errored", `${stage}: ${detail}`);
+}
 
-  const nodeId = argv[0];
-  log(`running node ${nodeId}`);
-
-  const sandboxEnv = parseSandboxEnv(process.env);
-  if (!sandboxEnv.ok) {
-    log(`env validation failed: ${sandboxEnv.detail}`);
-    emitAndExit(nodeId, "errored", `env: ${sandboxEnv.detail}`);
-  }
+async function checkSandboxEnv(nodeId: string): Promise<SandboxEnv> {
+  const parsed = parseSandboxEnv(process.env);
+  if (!parsed.ok) exitFailed(nodeId, "env", parsed.detail);
 
   const pre = await preflight();
-  if (!pre.ok) {
-    log(`preflight failed: ${pre.detail}`);
-    emitAndExit(nodeId, "errored", `preflight: ${pre.detail}`);
-  }
+  if (!pre.ok) exitFailed(nodeId, "preflight", pre.detail);
 
   const sandbox = await sandboxPreflight();
-  if (!sandbox.ok) {
-    log(`sandbox preflight failed: ${sandbox.detail}`);
-    emitAndExit(nodeId, "errored", `sandbox: ${sandbox.detail}`);
-  }
+  if (!sandbox.ok) exitFailed(nodeId, "sandbox", sandbox.detail);
 
-  const result = await runSession(nodeId, sandboxEnv.env);
+  return parsed.env;
+}
+
+async function main(): Promise<void> {
+  const nodeId = parseNodeIdArg(process.argv.slice(2), printUsage);
+  log(`running node ${nodeId}`);
+
+  const env = await checkSandboxEnv(nodeId);
+
+  const result = await runSession(nodeId, env);
   const postStatus = await queryNodeStatus(nodeId);
   const { outcome, detail } = classify(result, postStatus);
+  const sub: EnvelopeClass =
+    outcome === "errored"
+      ? classifyError(result.stdout)
+      : { outcome: "unknown" };
 
-  if (outcome === "errored") {
-    const sub = classifyError(result.stdout);
-    if (sub.outcome !== "unknown") {
-      log(`outcome=${sub.outcome} (${detail})`);
-      emitAndExit(nodeId, sub.outcome, detail, sub.reset_at);
-    }
-  }
-
-  log(`outcome=${outcome} (${detail})`);
-  emitAndExit(nodeId, outcome, detail);
+  const final = sub.outcome === "unknown" ? outcome : sub.outcome;
+  log(`outcome=${final} (${detail})`);
+  emitAndExit(nodeId, final, detail, sub.reset_at);
 }
 
 main().catch((err: unknown) => {

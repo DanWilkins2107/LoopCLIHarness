@@ -99,42 +99,70 @@ data "aws_iam_policy_document" "ci_apply" {
   source_policy_documents = [data.aws_iam_policy_document.state_access.json]
 
   statement {
-    sid       = "Ec2Read"
-    effect    = "Allow"
-    actions   = ["ec2:Describe*", "ec2:Get*"]
-    resources = ["*"]
-  }
-
-  statement {
-    sid    = "Ec2Compute"
+    sid    = "IamRole"
     effect = "Allow"
     actions = [
-      "ec2:RunInstances",
-      "ec2:TerminateInstances",
-      "ec2:StartInstances",
-      "ec2:StopInstances",
-      "ec2:RebootInstances",
-      "ec2:ModifyInstanceAttribute",
+      "iam:CreateRole",
+      "iam:DeleteRole",
+      "iam:GetRole",
+      "iam:TagRole",
+      "iam:UntagRole",
+      "iam:ListRoleTags",
+      "iam:UpdateAssumeRolePolicy",
+      "iam:ListAttachedRolePolicies",
+      "iam:ListRolePolicies",
+      "iam:ListInstanceProfilesForRole",
     ]
-    resources = ["*"]
+    resources = ["arn:aws:iam::${var.account_id}:role/${var.name_prefix}-*"]
   }
 
   statement {
-    sid       = "Ec2Tagging"
+    sid       = "IamRoleAttach"
     effect    = "Allow"
-    actions   = ["ec2:CreateTags", "ec2:DeleteTags"]
-    resources = ["*"]
+    actions   = ["iam:AttachRolePolicy", "iam:DetachRolePolicy"]
+    resources = ["arn:aws:iam::${var.account_id}:role/${var.name_prefix}-*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PolicyARN"
+      values   = ["arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"]
+    }
   }
 
   statement {
-    sid    = "Ec2Keys"
+    sid    = "IamInstanceProfile"
     effect = "Allow"
     actions = [
-      "ec2:CreateKeyPair",
-      "ec2:ImportKeyPair",
-      "ec2:DeleteKeyPair",
+      "iam:CreateInstanceProfile",
+      "iam:DeleteInstanceProfile",
+      "iam:GetInstanceProfile",
+      "iam:AddRoleToInstanceProfile",
+      "iam:RemoveRoleFromInstanceProfile",
+      "iam:TagInstanceProfile",
+      "iam:UntagInstanceProfile",
+      "iam:ListInstanceProfileTags",
     ]
-    resources = ["*"]
+    resources = ["arn:aws:iam::${var.account_id}:instance-profile/${var.name_prefix}-*"]
+  }
+
+  statement {
+    sid       = "IamPassRole"
+    effect    = "Allow"
+    actions   = ["iam:PassRole"]
+    resources = ["arn:aws:iam::${var.account_id}:role/${var.name_prefix}-*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["ec2.amazonaws.com"]
+    }
+  }
+
+  statement {
+    sid       = "DenyCiSelfManage"
+    effect    = "Deny"
+    actions   = ["iam:*"]
+    resources = ["arn:aws:iam::${var.account_id}:role/${var.name_prefix}-ci-*"]
   }
 }
 
@@ -158,4 +186,9 @@ resource "aws_iam_role_policy" "ci_apply" {
   name   = "${var.name_prefix}-ci-apply"
   role   = aws_iam_role.ci_apply.id
   policy = data.aws_iam_policy_document.ci_apply.json
+}
+
+resource "aws_iam_role_policy_attachment" "ci_apply_ec2" {
+  role       = aws_iam_role.ci_apply.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2FullAccess"
 }
