@@ -1,33 +1,8 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { EventEmitter } from "node:events";
-import type { ChildProcess } from "node:child_process";
-
-vi.mock("node:child_process", () => ({ spawn: vi.fn() }));
-
-import { spawn } from "node:child_process";
-import { spawnTool, wireSessionOutput, sessionReportedError } from "./session";
+import { wireSessionOutput, sessionReportedError } from "./session";
+import { fakeChild } from "./test-harness";
 
 afterEach(() => vi.restoreAllMocks());
-
-function fakeChild(): ChildProcess {
-  const child = new EventEmitter() as ChildProcess;
-  Object.assign(child, {
-    stdout: new EventEmitter(),
-    stderr: new EventEmitter(),
-  });
-  return child;
-}
-
-describe("spawnTool", () => {
-  it("spawns the bin with the given args and stdio", () => {
-    const child = fakeChild();
-    vi.mocked(spawn).mockReturnValue(child);
-    expect(spawnTool("aj", ["whoami"], ["ignore", "pipe", "pipe"])).toBe(child);
-    expect(spawn).toHaveBeenCalledWith("aj", ["whoami"], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-  });
-});
 
 describe("wireSessionOutput", () => {
   it("accumulates stdout and mirrors both streams to stderr", () => {
@@ -36,9 +11,9 @@ describe("wireSessionOutput", () => {
     const getStdout = wireSessionOutput(child);
 
     expect(getStdout()).toBe("");
-    child.stdout!.emit("data", "one ");
-    child.stdout!.emit("data", "two");
-    child.stderr!.emit("data", "warn");
+    child.stdout.emit("data", "one ");
+    child.stdout.emit("data", "two");
+    child.stderr.emit("data", "warn");
 
     expect(getStdout()).toBe("one two");
     expect(write.mock.calls.map((c) => c[0])).toEqual(["one ", "two", "warn"]);

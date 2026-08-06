@@ -1,27 +1,18 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { EventEmitter } from "node:events";
-import type { ChildProcess } from "node:child_process";
-
-vi.mock("./session", () => ({ spawnTool: vi.fn() }));
-
-import { spawnTool } from "./session";
+import { spawn } from "node:child_process";
 import { makeLog, emitResult, preflight } from "./entrypoint";
+import { fakeChild } from "./test-harness";
+import type { PipedChild } from "./session";
+
+const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
+vi.mock("node:child_process", () => ({ spawn: spawnMock }));
 
 afterEach(() => vi.restoreAllMocks());
 
-function fakeChild(): ChildProcess {
-  const child = new EventEmitter() as ChildProcess;
-  Object.assign(child, {
-    stdout: new EventEmitter(),
-    stderr: new EventEmitter(),
-  });
-  return child;
-}
-
 // Drive preflight to completion by emitting on the child it spawned.
-function runPreflight(drive: (child: ChildProcess) => void) {
+function runPreflight(drive: (child: PipedChild) => void) {
   const child = fakeChild();
-  vi.mocked(spawnTool).mockReturnValue(child);
+  vi.mocked(spawn).mockReturnValue(child);
   const result = preflight();
   drive(child);
   return result;
@@ -54,20 +45,18 @@ describe("emitResult", () => {
 describe("preflight", () => {
   it("queries aj whoami as json", async () => {
     await runPreflight((child) => {
-      child.stdout!.emit("data", "{}");
+      child.stdout.emit("data", "{}");
       child.emit("close", 0);
     });
-    expect(spawnTool).toHaveBeenCalledWith(
-      "aj",
-      ["whoami", "--json"],
-      ["ignore", "pipe", "pipe"],
-    );
+    expect(spawn).toHaveBeenCalledWith("aj", ["whoami", "--json"], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
   });
 
   it("passes on a clean exit with parseable json", async () => {
     const result = await runPreflight((child) => {
-      child.stdout!.emit("data", '{"user"');
-      child.stdout!.emit("data", ':"me"}');
+      child.stdout.emit("data", '{"user"');
+      child.stdout.emit("data", ':"me"}');
       child.emit("close", 0);
     });
     expect(result).toEqual({ ok: true });
@@ -85,7 +74,7 @@ describe("preflight", () => {
 
   it("fails on a nonzero exit, quoting stderr", async () => {
     const result = await runPreflight((child) => {
-      child.stderr!.emit("data", "no token\n");
+      child.stderr.emit("data", "no token\n");
       child.emit("close", 1);
     });
     expect(result.ok).toBe(false);
@@ -103,7 +92,7 @@ describe("preflight", () => {
 
   it("fails on unparseable output", async () => {
     const result = await runPreflight((child) => {
-      child.stdout!.emit("data", "not json");
+      child.stdout.emit("data", "not json");
       child.emit("close", 0);
     });
     expect(result).toEqual({

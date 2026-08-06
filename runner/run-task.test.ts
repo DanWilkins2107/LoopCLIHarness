@@ -1,41 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { EventEmitter } from "node:events";
-import type { ChildProcess } from "node:child_process";
+import { captureProcess, scriptedSpawn, type Script } from "./test-harness";
 
-vi.mock("./session", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./session")>()),
-  spawnTool: vi.fn(),
+const { spawnMock, preflightMock } = vi.hoisted(() => ({
+  spawnMock: vi.fn(),
+  preflightMock: vi.fn(),
 }));
+vi.mock("node:child_process", () => ({ spawn: spawnMock }));
 vi.mock("./entrypoint", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./entrypoint")>()),
-  preflight: vi.fn(),
+  preflight: preflightMock,
 }));
 
 const NODE = "n1";
 const ARGV = process.argv;
-
-interface Script {
-  stdout?: string;
-  stderr?: string;
-  code?: number | null;
-  error?: string;
-}
-
-function fakeChild(): ChildProcess {
-  const child = new EventEmitter() as ChildProcess;
-  Object.assign(child, {
-    stdout: new EventEmitter(),
-    stderr: new EventEmitter(),
-    stdin: Object.assign(new EventEmitter(), { write: vi.fn(), end: vi.fn() }),
-  });
-  return child;
-}
-
-// process.exit never returns, so the stub throws to unwind main the way the real
-// thing does. The module's top-level .catch then exits once more on its way out —
-// that second exit must return, or the throw escapes as an unhandled rejection.
-// `unwind: false` is for the tests where main throws on its own.
-class ExitSignal extends Error {}
 
 interface RunOptions {
   argv?: string[];
@@ -45,48 +22,16 @@ interface RunOptions {
 }
 
 async function run(opts: RunOptions = {}) {
-  const exits: number[] = [];
-  const out: string[] = [];
-  const err: string[] = [];
-  vi.spyOn(process.stdout, "write").mockImplementation((c) => {
-    out.push(String(c));
-    return true;
-  });
-  vi.spyOn(process.stderr, "write").mockImplementation((c) => {
-    err.push(String(c));
-    return true;
-  });
-  vi.spyOn(process, "exit").mockImplementation(((code = 0) => {
-    exits.push(code);
-    if ((opts.unwind ?? true) && exits.length === 1) throw new ExitSignal();
-  }) as never);
+  const { exits, out, err } = captureProcess(opts.unwind ?? true);
+  const { spawns, impl } = scriptedSpawn(opts.scripts ?? []);
+  spawnMock.mockImplementation(impl);
+  preflightMock.mockImplementation(
+    opts.preflight ?? (() => Promise.resolve({ ok: true })),
+  );
 
   process.argv = ["node", "run-task.ts", ...(opts.argv ?? [NODE])];
 
   vi.resetModules();
-  const session = await import("./session");
-  const entrypoint = await import("./entrypoint");
-
-  const scripts = opts.scripts ?? [];
-  const spawns: [string, string[]][] = [];
-  vi.mocked(session.spawnTool).mockImplementation((bin, args) => {
-    spawns.push([bin, args]);
-    const child = fakeChild();
-    const s = scripts.shift() ?? {};
-    setImmediate(() => {
-      if (child.stdin!.listenerCount("error"))
-        child.stdin!.emit("error", new Error("EPIPE"));
-      if (s.error) return void child.emit("error", new Error(s.error));
-      if (s.stdout) child.stdout!.emit("data", s.stdout);
-      if (s.stderr) child.stderr!.emit("data", s.stderr);
-      child.emit("close", s.code ?? 0);
-    });
-    return child;
-  });
-  vi.mocked(entrypoint.preflight).mockImplementation(
-    opts.preflight ?? (() => Promise.resolve({ ok: true })),
-  );
-
   await import("./run-task");
   await vi.waitFor(() => expect(exits.length).toBeGreaterThan(0));
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
-import type { ChildProcess } from "node:child_process";
+import type { ChildProcessByStdio } from "node:child_process";
+import type { Readable } from "node:stream";
 import {
   RESET_MARGIN_S,
   LIMIT_COOLDOWN_S,
@@ -9,10 +10,14 @@ import {
   IDLE_SHUTDOWN_S,
 } from "./constants";
 
-vi.mock("node:child_process", () => ({ spawn: vi.fn() }));
+const { spawnMock, sleepMsMock } = vi.hoisted(() => ({
+  spawnMock: vi.fn(),
+  sleepMsMock: vi.fn(),
+}));
+vi.mock("node:child_process", () => ({ spawn: spawnMock }));
 vi.mock("./backoff", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./backoff")>()),
-  sleepMs: vi.fn(),
+  sleepMs: sleepMsMock,
 }));
 
 const NODE = "n1";
@@ -31,13 +36,15 @@ interface Script {
 let signals: Record<string, (() => void)[]> = {};
 const raise = (sig: string) => (signals[sig] ?? []).forEach((h) => h());
 
-function fakeChild(): ChildProcess {
-  const child = new EventEmitter() as ChildProcess;
-  Object.assign(child, {
+// loop only ever spawns with stdio ["ignore", "pipe", "pipe"], so stdin is null
+// and the two readable ends are EventEmitters the test drives directly.
+type LoopChild = ChildProcessByStdio<null, Readable, Readable>;
+
+function fakeChild(): LoopChild {
+  return Object.assign(new EventEmitter(), {
     stdout: new EventEmitter(),
     stderr: new EventEmitter(),
-  });
-  return child;
+  }) as unknown as LoopChild;
 }
 
 // process.exit never returns, so `unwind` makes the stub throw for the one test
@@ -95,11 +102,7 @@ async function run(opts: RunOptions = {}) {
 
   process.argv = ["node", "loop.ts", ...(opts.argv ?? [])];
 
-  vi.resetModules();
-  const { spawn } = await import("node:child_process");
-  const { sleepMs } = await import("./backoff");
-
-  vi.mocked(sleepMs).mockImplementation((ms) => {
+  sleepMsMock.mockImplementation((ms: number) => {
     sleeps.push(ms);
     clock += ms;
     return Promise.resolve();
@@ -107,7 +110,7 @@ async function run(opts: RunOptions = {}) {
 
   const tasks = opts.tasks ?? [];
   const runs = opts.runs ?? [];
-  vi.mocked(spawn).mockImplementation(((bin: string, args: string[]) => {
+  spawnMock.mockImplementation(((bin: string, args: string[]) => {
     if (opts.spawnThrows) throw opts.spawnThrows;
     spawns.push([bin, args]);
     const s = (bin === "aj" ? tasks.shift() : runs.shift()) ?? idle();
@@ -115,13 +118,14 @@ async function run(opts: RunOptions = {}) {
     s.onSpawn?.();
     setImmediate(() => {
       if (s.error) return void child.emit("error", new Error(s.error));
-      if (s.stdout) child.stdout!.emit("data", s.stdout);
-      if (s.stderr) child.stderr!.emit("data", s.stderr);
+      if (s.stdout) child.stdout.emit("data", s.stdout);
+      if (s.stderr) child.stderr.emit("data", s.stderr);
       child.emit("close", s.code ?? 0);
     });
     return child;
   }) as never);
 
+  vi.resetModules();
   await import("./loop");
   await exited;
 

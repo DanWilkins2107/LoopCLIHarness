@@ -1,4 +1,4 @@
-import { spawnTool } from "./session";
+import { spawn } from "node:child_process";
 
 // Exit code when invoked with no/invalid CLI args (usage error).
 export const USAGE_EXIT = 2;
@@ -31,15 +31,13 @@ export function preflight(): Promise<
   { ok: true } | { ok: false; detail: string }
 > {
   return new Promise((resolve) => {
-    const child = spawnTool(
-      "aj",
-      ["whoami", "--json"],
-      ["ignore", "pipe", "pipe"],
-    );
+    const child = spawn("aj", ["whoami", "--json"], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let out = "";
     let err = "";
-    child.stdout!.on("data", (d) => (out += d));
-    child.stderr!.on("data", (d) => (err += d));
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (err += d));
     child.on("error", (e) =>
       resolve({ ok: false, detail: `\`aj\` not runnable: ${e.message}` }),
     );

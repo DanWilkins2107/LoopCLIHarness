@@ -1,4 +1,5 @@
-import { spawnTool, wireSessionOutput, sessionReportedError } from "./session";
+import { spawn } from "node:child_process";
+import { wireSessionOutput, sessionReportedError } from "./session";
 import {
   CLAUDE_ARGS,
   USAGE_EXIT,
@@ -63,10 +64,12 @@ function runSession(nodeId: string): Promise<{
   stdout: string;
 }> {
   return new Promise((resolve) => {
-    const child = spawnTool("claude", CLAUDE_ARGS, ["pipe", "pipe", "pipe"]);
-    child.stdin!.on("error", () => {});
-    child.stdin!.write(buildPrompt(nodeId));
-    child.stdin!.end();
+    const child = spawn("claude", CLAUDE_ARGS, {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    child.stdin.on("error", () => {});
+    child.stdin.write(buildPrompt(nodeId));
+    child.stdin.end();
 
     const getStdout = wireSessionOutput(child);
 
