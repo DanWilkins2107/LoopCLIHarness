@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { captureProcess, scriptedSpawn, type Script } from "./test-harness";
+import { driveEntry, type Script } from "./test-harness";
 
 const { spawnMock, preflightMock } = vi.hoisted(() => ({
   spawnMock: vi.fn(),
@@ -22,25 +22,14 @@ interface RunOptions {
 }
 
 async function run(opts: RunOptions = {}) {
-  const { exits, out, err } = captureProcess(opts.unwind ?? true);
-  const { spawns, impl } = scriptedSpawn([opts.session ?? {}]);
-  spawnMock.mockImplementation(impl);
   preflightMock.mockImplementation(
     opts.preflight ?? (() => Promise.resolve({ ok: true })),
   );
-
   process.argv = ["node", "run-judge.ts", ...(opts.argv ?? [NODE])];
-
-  vi.resetModules();
-  await import("./run-judge");
-  await vi.waitFor(() => expect(exits.length).toBeGreaterThan(0));
-
-  return {
-    code: exits[0],
-    stderr: err.join(""),
-    spawns,
-    result: out.length ? JSON.parse(out[0]) : null,
-  };
+  return driveEntry(() => import("./run-judge"), spawnMock, {
+    scripts: [opts.session ?? {}],
+    unwind: opts.unwind,
+  });
 }
 
 const verdictLine = (verdict: string, reason: string) =>

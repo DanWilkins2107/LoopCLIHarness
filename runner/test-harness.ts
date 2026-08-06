@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { vi } from "vitest";
+import { expect, vi, type Mock } from "vitest";
 import type { PipedChild } from "./session";
 
 export interface Script {
@@ -55,7 +55,7 @@ export function captureProcess(unwind: boolean) {
 }
 
 // One scripted child per spawn, in call order: each script says what the child
-// emits before it closes. Spawns past the end of the list get an empty script.
+// emits before it closes.
 export function scriptedSpawn(scripts: Script[]) {
   const remaining = [...scripts];
   const spawns: [string, string[]][] = [];
@@ -75,4 +75,33 @@ export function scriptedSpawn(scripts: Script[]) {
     return child;
   };
   return { spawns, impl };
+}
+
+export interface DriveOptions {
+  scripts?: Script[];
+  unwind?: boolean;
+}
+
+// Run an entry module end to end. The module calls main() at import time, so it
+// has to be re-imported per test — hence `load` and the module reset. Caller
+// sets process.argv and any module-specific mocks first.
+export async function driveEntry(
+  load: () => Promise<unknown>,
+  spawnMock: Mock,
+  opts: DriveOptions,
+) {
+  const { exits, out, err } = captureProcess(opts.unwind ?? true);
+  const { spawns, impl } = scriptedSpawn(opts.scripts ?? []);
+  spawnMock.mockImplementation(impl);
+
+  vi.resetModules();
+  await load();
+  await vi.waitFor(() => expect(exits.length).toBeGreaterThan(0));
+
+  return {
+    code: exits[0],
+    stderr: err.join(""),
+    spawns,
+    result: JSON.parse(out[0]),
+  };
 }
