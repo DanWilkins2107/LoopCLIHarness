@@ -5,10 +5,10 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text"],
-      // decide.ts is the whole unit-testable surface: every other module is a
-      // thin wrapper over EC2, Secrets Manager or Supabase, and covering it
-      // would only assert the mocks.
-      include: ["decide.ts"],
+      // decide.ts and recommended.ts hold every rule worth testing. The rest is
+      // thin wrapping over EC2, Secrets Manager and Supabase, where a test would
+      // only assert the mocks.
+      include: ["decide.ts", "recommended.ts"],
       exclude: [...coverageConfigDefaults.exclude],
       thresholds: { 100: true },
     },

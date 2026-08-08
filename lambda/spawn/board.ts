@@ -1,56 +1,23 @@
-import {
-  GetSecretValueCommand,
-  SecretsManagerClient,
-} from "@aws-sdk/client-secrets-manager";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { z } from "zod";
+import {
+  AGENT_TURN_STATUSES,
+  GATE_EDGE_TYPES,
+  gatedTargets,
+  type Blocker,
+  type GateEdge,
+} from "./recommended";
+import { loadBoardCredentials } from "./secret";
 
-const AGENT_TURN_STATUSES = [
-  "awaiting_agent_breakdown",
-  "split_approved",
-  "awaiting_agent_spec",
-  "ready_for_pickup",
-  "evaluating_soft_block",
-  "pr_changes_requested",
-];
-
-// Edge types that make a target not-recommended. Soft blocks only annotate.
-const GATE_EDGE_TYPES = ["firm_block", "firm_block_plan", "reassess_after"];
-
-const BoardSecretSchema = z.object({
-  url: z.url(),
-  anon_key: z.string().min(1),
-  email: z.email(),
-  password: z.string().min(1),
-});
-
-interface GateEdge {
-  source_id: string;
-  target_id: string;
-  type: string;
-}
-
-interface Blocker {
-  id: string;
-  status: string;
-  merge_sha: string | null;
-}
-
-type Response<T> = { data: T[] | null; error: { message: string } | null };
-
-function rows<T>(res: Response<T>, what: string): T[] {
+function rows<T>(
+  res: { data: T[] | null; error: { message: string } | null },
+  what: string,
+): T[] {
   if (res.error) throw new Error(`${what} failed: ${res.error.message}`);
   return res.data ?? [];
 }
 
 async function connect(secretArn: string): Promise<SupabaseClient> {
-  const secrets = new SecretsManagerClient({});
-  const { SecretString } = await secrets.send(
-    new GetSecretValueCommand({ SecretId: secretArn }),
-  );
-  if (!SecretString) throw new Error("board secret has no SecretString");
-  const cfg = BoardSecretSchema.parse(JSON.parse(SecretString));
-
+  const cfg = await loadBoardCredentials(secretArn);
   const sb = createClient(cfg.url, cfg.anon_key, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
@@ -62,32 +29,31 @@ async function connect(secretArn: string): Promise<SupabaseClient> {
   return sb;
 }
 
-// Mirrors the "recommended" rule of AgentJira's `aj tasks`: a plan-variant
-// blocker is satisfied once its plan lands, a broken_down blocker once its
-// whole subtree is complete, everything else once it is done.
-function isSatisfied(
-  edgeType: string,
-  blocker: Blocker | undefined,
-  subtreeComplete: Map<string, boolean>,
-): boolean {
-  if (!blocker) return false;
-  if (edgeType === "firm_block_plan")
-    return blocker.status === "done" || blocker.merge_sha !== null;
-  if (blocker.status === "broken_down")
-    return subtreeComplete.get(blocker.id) === true;
-  return blocker.status === "done";
-}
-
 async function fetchSubtreeComplete(
   sb: SupabaseClient,
-  ids: string[],
+  blockers: Map<string, Blocker>,
 ): Promise<Map<string, boolean>> {
+  const ids = [...blockers.values()]
+    .filter((b) => b.status === "broken_down")
+    .map((b) => b.id);
   if (ids.length === 0) return new Map();
   const data = rows<{ id: string; complete: boolean }>(
     await sb.rpc("subtree_complete", { p_ids: ids }),
     "subtree_complete RPC",
   );
   return new Map(data.map((r) => [r.id, r.complete]));
+}
+
+async function fetchBlockers(
+  sb: SupabaseClient,
+  edges: GateEdge[],
+): Promise<Map<string, Blocker>> {
+  const ids = [...new Set(edges.map((e) => e.source_id))];
+  const blockers = rows<Blocker>(
+    await sb.from("nodes").select("id, status, merge_sha").in("id", ids),
+    "blockers query",
+  );
+  return new Map(blockers.map((b) => [b.id, b]));
 }
 
 async function fetchGatedNodeIds(
@@ -105,38 +71,18 @@ async function fetchGatedNodeIds(
   );
   if (edges.length === 0) return new Set();
 
-  const blockerIds = [...new Set(edges.map((e) => e.source_id))];
-  const blockers = new Map(
-    rows<Blocker>(
-      await sb
-        .from("nodes")
-        .select("id, status, merge_sha")
-        .in("id", blockerIds),
-      "blockers query",
-    ).map((b) => [b.id, b]),
-  );
-  const subtreeComplete = await fetchSubtreeComplete(
-    sb,
-    [...blockers.values()]
-      .filter((b) => b.status === "broken_down")
-      .map((b) => b.id),
-  );
-
-  return new Set(
-    edges
-      .filter(
-        (e) => !isSatisfied(e.type, blockers.get(e.source_id), subtreeComplete),
-      )
-      .map((e) => e.target_id),
+  const blockers = await fetchBlockers(sb, edges);
+  return gatedTargets(
+    edges,
+    blockers,
+    await fetchSubtreeComplete(sb, blockers),
   );
 }
 
-export async function hasRecommendedWork(
-  secretArn: string,
+async function fetchUnstaleCandidates(
+  sb: SupabaseClient,
   projectId: string,
-): Promise<boolean> {
-  const sb = await connect(secretArn);
-
+): Promise<string[]> {
   const candidates = rows<{ id: string }>(
     await sb
       .from("nodes")
@@ -146,7 +92,7 @@ export async function hasRecommendedWork(
       .is("claimed_by", null),
     "nodes query",
   );
-  if (candidates.length === 0) return false;
+  if (candidates.length === 0) return [];
 
   // Stale (an ancestor is currently invalidated) is derived, not stored.
   const stale = new Set(
@@ -155,12 +101,17 @@ export async function hasRecommendedWork(
       "stale_node_ids RPC",
     ),
   );
-  const live = candidates.filter((n) => !stale.has(n.id));
-  if (live.length === 0) return false;
+  return candidates.map((n) => n.id).filter((id) => !stale.has(id));
+}
 
-  const gated = await fetchGatedNodeIds(
-    sb,
-    live.map((n) => n.id),
-  );
-  return live.some((n) => !gated.has(n.id));
+export async function hasRecommendedWork(
+  secretArn: string,
+  projectId: string,
+): Promise<boolean> {
+  const sb = await connect(secretArn);
+  const candidates = await fetchUnstaleCandidates(sb, projectId);
+  if (candidates.length === 0) return false;
+
+  const gated = await fetchGatedNodeIds(sb, candidates);
+  return candidates.some((id) => !gated.has(id));
 }
