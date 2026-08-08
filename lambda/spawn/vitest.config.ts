@@ -5,11 +5,17 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text"],
-      // decide.ts and recommended.ts hold every rule worth testing. The rest is
-      // thin wrapping over EC2, Secrets Manager and Supabase, where a test would
-      // only assert the mocks.
-      include: ["decide.ts", "recommended.ts"],
-      exclude: [...coverageConfigDefaults.exclude],
+      include: ["**/*.ts"],
+      // Everything excluded here is a thin wrapper over EC2, Secrets Manager or
+      // Supabase, where a test would only assert the mocks. A new file is
+      // covered by default and has to earn its way onto this list.
+      exclude: [
+        ...coverageConfigDefaults.exclude,
+        "handler.ts",
+        "board.ts",
+        "env.ts",
+        "helpers/**",
+      ],
       thresholds: { 100: true },
     },
   },

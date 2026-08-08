@@ -1,4 +1,5 @@
 import { hasRecommendedWork } from "./board";
+import { MAX_INSTANCE_AGE_MINUTES } from "./constants";
 import { decide } from "./decide";
 import { env } from "./env";
 import {
@@ -18,7 +19,7 @@ export async function handler(): Promise<void> {
   const { terminate, spawn } = decide(
     instances,
     new Date(),
-    env.MAX_INSTANCE_AGE_MINUTES,
+    MAX_INSTANCE_AGE_MINUTES,
     hasWork,
   );
   if (terminate.length > 0) await terminateSupervisors(terminate);

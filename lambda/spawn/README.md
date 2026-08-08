@@ -18,7 +18,8 @@ Environment (validated with zod at module load — see `env.ts`):
 | `BOARD_SECRET_ARN` | Secrets Manager secret holding the board login |
 | `LAUNCH_TEMPLATE_ID` | Supervisor launch template |
 | `SUBNET_ID` | Subnet to launch into |
-| `MAX_INSTANCE_AGE_MINUTES` | Reaper TTL, default 720 |
+
+The reaper TTL is hardcoded in `constants.ts`, not configurable.
 
 The board secret is a JSON object with the same keys the `aj` CLI config uses:
 `url`, `anon_key`, `email`, `password`. It is a board *user* credential with

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { MAX_INSTANCE_AGE_MINUTES as TTL_MINUTES } from "./constants";
 import { decide } from "./decide";
 
 const NOW = new Date("2026-01-01T12:00:00Z");
-const TTL_MINUTES = 720;
 
 function agedMinutes(minutes: number): Date {
   return new Date(NOW.getTime() - minutes * 60_000);
@@ -33,9 +33,9 @@ describe("decide", () => {
 
   it("terminates instances at or past the TTL and does not spawn that tick", () => {
     const instances = [
-      { id: "i-young", launchedAt: agedMinutes(719) },
-      { id: "i-exact", launchedAt: agedMinutes(720) },
-      { id: "i-old", launchedAt: agedMinutes(1000) },
+      { id: "i-young", launchedAt: agedMinutes(TTL_MINUTES - 1) },
+      { id: "i-exact", launchedAt: agedMinutes(TTL_MINUTES) },
+      { id: "i-old", launchedAt: agedMinutes(TTL_MINUTES + 300) },
     ];
     expect(decide(instances, NOW, TTL_MINUTES, true)).toEqual({
       terminate: ["i-exact", "i-old"],

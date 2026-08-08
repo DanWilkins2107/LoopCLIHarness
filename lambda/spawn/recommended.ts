@@ -26,9 +26,9 @@ export interface Blocker {
   merge_sha: string | null;
 }
 
-// Mirrors the "recommended" rule of AgentJira's `aj tasks`: a plan-variant
-// blocker is satisfied once its plan lands, a broken_down blocker once its
-// whole subtree is complete, everything else once it is done.
+// A plan-variant blocker is satisfied once its plan lands (done, or a merge sha
+// recorded); a broken_down blocker once its whole subtree is complete;
+// everything else once it is done.
 function isSatisfied(
   edgeType: string,
   blocker: Blocker | undefined,
