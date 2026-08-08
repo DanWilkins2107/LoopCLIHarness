@@ -5,6 +5,7 @@ on:
     paths:
       - 'runner/**'
       - 'supervisor/**'
+      - 'lambda/spawn/**'
       - '.fallowrc.json'
       - '.github/workflows/node.yml'
 
@@ -17,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [runner, supervisor]
+        package: [runner, supervisor, lambda/spawn]
     defaults:
       run:
         working-directory: ${{ matrix.package }}
@@ -41,7 +42,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [runner, supervisor]
+        package: [runner, supervisor, lambda/spawn]
     defaults:
       run:
         working-directory: ${{ matrix.package }}
