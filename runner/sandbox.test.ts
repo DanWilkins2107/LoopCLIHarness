@@ -3,6 +3,19 @@ import { buildBwrapArgs, parseSandboxEnv, type SandboxEnv } from "./sandbox";
 
 const PROXY = "http://127.0.0.1:3128";
 const WORKDIR = "/srv/session-work";
+const PROXY_DETAIL =
+  "LOOP_SESSION_PROXY: must be a proxy URL, e.g. http://127.0.0.1:3128";
+
+const RO_SYSTEM_PATHS = [
+  "/usr",
+  "/bin",
+  "/sbin",
+  "/lib",
+  "/lib32",
+  "/lib64",
+  "/etc",
+  "/opt",
+];
 
 const env = (over: Partial<SandboxEnv> = {}): SandboxEnv => ({
   LOOP_SESSION_PROXY: PROXY,
@@ -58,10 +71,12 @@ describe("buildBwrapArgs", () => {
     ).toBe(true);
   });
 
-  it("binds the workdir and chdirs into it", () => {
-    expect(
-      hasSeq(build(), ["--bind", WORKDIR, WORKDIR, "--chdir", WORKDIR]),
-    ).toBe(true);
+  it("makes the workdir the only writable host bind", () => {
+    const args = build();
+    expect(hasSeq(args, ["--bind", WORKDIR, WORKDIR, "--chdir", WORKDIR])).toBe(
+      true,
+    );
+    expect(countOf(args, "--bind")).toBe(1);
   });
 
   it("sets every proxy env var, including the git http.proxy trio", () => {
@@ -106,7 +121,7 @@ describe("buildBwrapArgs", () => {
     expect(args).not.toContain("/etc");
   });
 
-  it("consults the exists seam for every system path it ro-binds", () => {
+  it("probes exactly the expected system paths, read-only every time", () => {
     const probed: string[] = [];
     const args = build({
       exists: (p) => {
@@ -114,22 +129,37 @@ describe("buildBwrapArgs", () => {
         return true;
       },
     });
-    expect(probed.length).toBeGreaterThan(0);
-    expect(countOf(args, "--ro-bind")).toBe(probed.length);
-    for (const p of probed)
+    expect(probed).toEqual(RO_SYSTEM_PATHS);
+    expect(countOf(args, "--ro-bind")).toBe(RO_SYSTEM_PATHS.length);
+    for (const p of RO_SYSTEM_PATHS) {
       expect(hasSeq(args, ["--ro-bind", p, p])).toBe(true);
+      expect(hasSeq(args, ["--bind", p, p])).toBe(false);
+    }
   });
 
   it("falls back to the real fs when no exists seam is given", () => {
     expect(() => buildBwrapArgs("claude", [], { env: env() })).not.toThrow();
   });
 
-  it("puts the inner command and its args last", () => {
-    expect(build().slice(-3)).toEqual(["claude", "--print", "hello"]);
+  it.each([
+    ["without NO_PROXY", env()],
+    ["with NO_PROXY", env({ NO_PROXY: "localhost" })],
+  ])("puts the inner command and its args last %s", (_label, sandboxEnv) => {
+    expect(build({ env: sandboxEnv }).slice(-3)).toEqual([
+      "claude",
+      "--print",
+      "hello",
+    ]);
   });
 });
 
 describe("parseSandboxEnv", () => {
+  const detailOf = (raw: NodeJS.ProcessEnv): string => {
+    const result = parseSandboxEnv(raw);
+    expect(result.ok).toBe(false);
+    return result.ok === false ? result.detail : "";
+  };
+
   it("accepts a well-formed environment", () => {
     const result = parseSandboxEnv({
       LOOP_SESSION_PROXY: PROXY,
@@ -141,31 +171,56 @@ describe("parseSandboxEnv", () => {
     });
   });
 
-  it.each([
+  it.each<[string, NodeJS.ProcessEnv, string]>([
     [
       "a malformed proxy URL",
       { LOOP_SESSION_PROXY: "127.0.0.1:3128", LOOP_SESSION_WORKDIR: WORKDIR },
+      PROXY_DETAIL,
     ],
-    ["a missing proxy URL", { LOOP_SESSION_WORKDIR: WORKDIR }],
-  ])("rejects %s, naming the field", (_label, raw) => {
-    const result = parseSandboxEnv(raw);
-    expect(result.ok).toBe(false);
-    expect(result.ok === false && result.detail).toContain(
-      "LOOP_SESSION_PROXY",
-    );
-  });
-
-  it.each([
+    ["a missing proxy URL", { LOOP_SESSION_WORKDIR: WORKDIR }, PROXY_DETAIL],
     [
       "a blank workdir",
       { LOOP_SESSION_PROXY: PROXY, LOOP_SESSION_WORKDIR: "   " },
+      "LOOP_SESSION_WORKDIR: must be a non-empty path",
     ],
-    ["a missing workdir", { LOOP_SESSION_PROXY: PROXY }],
-  ])("rejects %s, naming the field", (_label, raw) => {
-    const result = parseSandboxEnv(raw);
-    expect(result.ok).toBe(false);
-    expect(result.ok === false && result.detail).toContain(
-      "LOOP_SESSION_WORKDIR",
+    [
+      "a missing workdir",
+      { LOOP_SESSION_PROXY: PROXY },
+      "LOOP_SESSION_WORKDIR: must be a path",
+    ],
+  ])("rejects %s with the exact detail", (_label, raw, detail) => {
+    expect(detailOf(raw)).toBe(detail);
+  });
+
+  it("joins every issue into a single detail string", () => {
+    expect(detailOf({})).toBe(
+      `${PROXY_DETAIL}; LOOP_SESSION_WORKDIR: must be a path`,
     );
+  });
+
+  it("accepts NO_PROXY and trims it", () => {
+    const result = parseSandboxEnv({
+      LOOP_SESSION_PROXY: PROXY,
+      LOOP_SESSION_WORKDIR: WORKDIR,
+      NO_PROXY: "  localhost,127.0.0.1  ",
+    });
+    expect(result).toEqual({
+      ok: true,
+      env: {
+        LOOP_SESSION_PROXY: PROXY,
+        LOOP_SESSION_WORKDIR: WORKDIR,
+        NO_PROXY: "localhost,127.0.0.1",
+      },
+    });
+  });
+
+  it("rejects a blank NO_PROXY", () => {
+    expect(
+      detailOf({
+        LOOP_SESSION_PROXY: PROXY,
+        LOOP_SESSION_WORKDIR: WORKDIR,
+        NO_PROXY: "   ",
+      }),
+    ).toMatch(/^NO_PROXY: /);
   });
 });
