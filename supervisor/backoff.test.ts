@@ -2,7 +2,10 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { apiBackoffMs, sleepMs } from "./backoff";
 import { BACKOFF_BASE_S, BACKOFF_CAP_S, BACKOFF_JITTER } from "./constants";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe("sleepMs", () => {
   it("resolves after the requested delay", async () => {
@@ -12,9 +15,8 @@ describe("sleepMs", () => {
     await vi.advanceTimersByTimeAsync(499);
     expect(done).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
-    await p;
     expect(done).toHaveBeenCalled();
-    vi.useRealTimers();
+    await p;
   });
 });
 
