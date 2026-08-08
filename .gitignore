@@ -8,6 +8,9 @@ dist/
 build/
 out/
 
+# Mutation testing
+.stryker-tmp/
+
 # Environment / secrets
 .env
 .env.*
