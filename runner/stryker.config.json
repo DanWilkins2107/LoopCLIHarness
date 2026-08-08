@@ -1,0 +1,16 @@
+{
+  "testRunner": "vitest",
+  "coverageAnalysis": "perTest",
+  "reporters": ["progress", "clear-text"],
+  "mutate": [
+    "*.ts",
+    "!*.test.ts",
+    "!vitest.config.ts",
+    "!test-harness.ts",
+    "!entrypoint.ts",
+    "!run-task.ts",
+    "!run-judge.ts",
+    "!session.ts"
+  ],
+  "thresholds": { "high": 100, "low": 0, "break": 80 }
+}
