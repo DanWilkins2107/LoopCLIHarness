@@ -1,16 +1,25 @@
 # Lambda-triggered VM supervisor architecture
 
-**Status:** Decided (v1)
+**Status:** Decided (v2 — supersedes v1 start-stopped-VM)
 **Decision:** Operate the loop as a **scheduled Lambda that spawns an ephemeral VM**.
 An EventBridge cron fires a cheap Lambda that reads the board (`aj tasks --json`); when
-unattempted recommended work exists and no supervisor VM is already running, it **starts a
-pre-provisioned, stopped VM**. That VM runs the deterministic supervisor loop
-(`ff1bd2c1`) to completion and **stops itself** when the loop exits idle. No VM idles between
-bursts; no long-lived daemon.
+unattempted recommended work exists and no supervisor instance is already alive, it issues
+**`RunInstances` from the VM launch template**. That fresh instance runs the deterministic
+supervisor loop (`ff1bd2c1`) to completion and **terminates itself** when the loop exits idle. No
+instance exists between bursts; no long-lived daemon.
 
 This node decides how the loop is *operated*. It changes no loop code: the supervisor's
 existing contract — run to completion, then **exit 0 with a machine-readable summary** when no
 unattempted recommended task remains — is the only seam this design leans on.
+
+> **v2 note.** v1 of this document specified starting a single long-lived instance that had been
+> created once and left stopped. That was superseded by the terminate+recreate call on `f793bb1c`
+> (PR 20), which shipped `aws_launch_template` with
+> `instance_initiated_shutdown_behavior = terminate` and a `delete_on_termination` gp3 root
+> (`terraform/modules/vm/main.tf`). There is no standing instance and no stable instance id;
+> nothing survives a burst. The box sits in a private subnet behind NAT with no public IP,
+> reachable only via SSM, and re-provisions from `user_data` on every boot. This document now
+> matches that.
 
 ## What we are operating
 
@@ -24,9 +33,9 @@ off when there isn't, without paying for an idle VM in between?** Work arrives i
 approves specs, a PR merges and unblocks children), so between bursts the right amount of compute
 is *zero*.
 
-The host is already decided: a **raw VM** (`hosting-model.md`), chosen for long-lived stateful
-Claude Code sessions with an operator-owned drain-then-replace lifecycle. This design must sit on
-that host and conflict with neither it nor the lifecycle node (`5039267c`).
+The host is already decided: a **raw VM** (`hosting-model.md`), chosen for stateful Claude Code
+sessions with an operator-owned drain-then-replace lifecycle. This design must sit on that host
+and conflict with neither it nor the lifecycle node (`5039267c`).
 
 ## Options weighed
 
@@ -49,14 +58,14 @@ only while there is work.
 
 - **Trigger** — EventBridge cron invokes a small Lambda on a coarse interval (e.g. every few
   minutes). The Lambda reads `aj tasks --json`, and only if there is unattempted recommended work
-  **and** no supervisor VM already running does it start the VM. A poll with nothing to do costs a
-  sub-second Lambda invocation, not a running VM.
-- **Cost** — Near-zero between bursts (Lambda invocations are effectively free at this cadence);
-  VM time is paid only while the loop is actually working. Matches spend to work.
+  **and** no supervisor instance is already alive does it launch one. A poll with nothing to do
+  costs a sub-second Lambda invocation, not a running VM.
+- **Cost** — Zero between bursts: no instance, no EBS volume, no address. VM time is paid only
+  while the loop is actually working. Matches spend to work.
 - **Fit** — Clean division of labor: the Lambda is stateless and short (Lambda's native shape),
-  the VM is long-lived and stateful (the raw-VM host's native shape). The loop stays deployment-
-  agnostic and unchanged — the Lambda just starts the box; the loop's existing exit-0-when-idle is
-  the stop signal. Chosen.
+  the VM is stateful for the length of a burst (the raw-VM host's native shape). The loop stays
+  deployment-agnostic and unchanged — the Lambda just launches the box; the loop's existing
+  exit-0-when-idle is the stop signal. Chosen.
 
 ### 3. Lambda-only (no VM)
 
@@ -69,10 +78,11 @@ Run the loop (and the Claude Code sessions it drives) inside Lambda itself.
 
 ## v1 recommendation
 
-**A scheduled Lambda that starts a stopped, pre-provisioned VM (option 2).** It is the only option
-that pays zero compute between bursts while still hosting the long-lived stateful sessions on the
-raw VM the hosting model requires — the Lambda is the cheap trigger, the VM is the capable worker,
-and the loop's existing run-to-completion contract is the entire integration seam.
+**A scheduled Lambda that launches a fresh instance from the VM launch template per burst
+(option 2).** It is the only option that pays zero compute *and zero storage* between bursts while
+still hosting the sessions on the raw VM the hosting model requires — the Lambda is the cheap
+trigger, the instance is the capable worker, and the loop's run-to-completion contract is the
+entire integration seam.
 
 ### One-line reason per rejected option
 
@@ -88,92 +98,102 @@ and the loop's existing run-to-completion contract is the entire integration sea
   later refinement, not needed for v1.
 - The Lambda does the **cheap check only**: `aj tasks --json`, filter to unattempted `recommended`
   entries (the same set the loop would pick from). Empty → do nothing, exit. Non-empty → proceed to
-  the concurrency check below, then start the VM. The Lambda never runs a task itself and holds no
-  state between invocations.
-- The Lambda needs board read access and permission to start/describe the one VM — a tightly scoped
-  role, provisioned via Terraform alongside the VM.
+  the concurrency check below, then launch. The Lambda never runs a task itself and holds no state
+  between invocations.
+- The Lambda needs board read access and a tightly scoped EC2 role — `ec2:RunInstances`,
+  `ec2:TerminateInstances`, `ec2:CreateTags`, `ec2:DescribeInstances` and `iam:PassRole` for the VM
+  instance-profile role — provisioned via Terraform alongside the launch template.
 
-## VM start-vs-stop mechanism
+## VM launch-and-terminate mechanism
 
-**Start a pre-provisioned, stopped instance** (not Terraform create/destroy per burst, not a
-prebaked-AMI launch each time).
+**Launch a fresh instance from the launch template per burst; the box terminates itself when the
+loop is done** (not starting an instance that was left stopped, not Terraform create/destroy per
+burst).
 
-- **Start stopped instance — chosen.** The supervisor VM is created **once** by Terraform and left
-  in the stopped state. The Lambda issues *start*; the VM issues *stop* on itself when idle.
-  Start/stop is seconds, has a stable instance id (which makes the concurrency check trivial — see
-  below), and keeps the whole fleet in one Terraform state without the Lambda ever mutating infra.
+- **Launch from the launch template per burst — chosen.** Terraform owns the `aws_launch_template`
+  (AMI, instance type, security group, instance profile, encrypted gp3 root, `user_data`); the
+  Lambda calls `RunInstances` against it and tags the result with the supervisor tag. Because the
+  template sets `instance_initiated_shutdown_behavior = terminate` and the root volume is
+  `delete_on_termination`, the loop's own `poweroff` is a full teardown — instance and disk both
+  go. Between bursts there is nothing to pay for and nothing to drift.
+- **Start an instance left stopped — rejected (was v1's choice).** Keeping one instance created
+  once and started per burst pays standing EBS (and any attached address) forever, keeps mutable
+  state alive across bursts so the box drifts from `user_data`, and needs `ec2:StartInstances` plus
+  a stable instance id in the Lambda's contract. Terminate-on-idle is what shipped, and it is
+  strictly cheaper and strictly more reproducible.
 - **Terraform create/destroy per burst — rejected.** Putting `terraform apply`/`destroy` on the
   hot path means the Lambda mutates infrastructure state on every burst: slow, race-prone against
   concurrent applies, and it drags the full IaC toolchain into a function that should only make one
-  API call. Terraform provisions the box; it does not cycle it.
-- **Prebaked-AMI launch each time — rejected for v1.** Launching a fresh instance from a baked
-  image per burst is the cleaner path *once image-bake and drain-then-replace exist* (`5039267c`),
-  but for v1 it adds a bake pipeline and per-launch instance churn for no benefit over starting one
-  stopped box. Revisit when lifecycle lands (see reconciliation).
+  API call. Terraform owns the template; the Lambda cycles instances from it.
 
 ## VM lifecycle (per burst)
 
-1. Lambda starts the stopped instance.
-2. On boot the VM runs the supervisor loop (`ff1bd2c1`) — e.g. a systemd oneshot / boot unit that
-   invokes the `loop` entrypoint. The loop works the recommended set exactly as specified.
+1. Lambda calls `RunInstances` from the launch template and tags the instance with the supervisor
+   tag.
+2. The instance boots and provisions itself from `user_data`, then runs the supervisor loop
+   (`ff1bd2c1`) — e.g. a systemd oneshot / boot unit that invokes the `loop` entrypoint. The loop
+   works the recommended set exactly as specified.
 3. The loop **runs to completion and exits 0 with its summary** when no unattempted recommended
    task remains. That exit is the **only seam**: the boot unit waits on it and, on a clean exit,
-   the VM **stops itself** (self-issued `shutdown`/stop). No external stop signal, no idle poll on
-   the box.
-4. Stopped VM costs nothing but storage until the next Lambda start.
+   issues `poweroff`.
+4. `instance_initiated_shutdown_behavior = terminate` turns that shutdown into a termination, and
+   `delete_on_termination` takes the root volume with it. Cost between bursts is zero — no
+   instance, no EBS, no address.
 
 The loop's `asked_user` / `errored` outcomes need no special operating handling — they resolve on
 the board (human turn, or surfaced error), the loop still exits 0 when nothing recommended remains,
-and the VM stops. The next scheduled Lambda re-evaluates the board fresh.
+and the instance terminates. The next scheduled Lambda re-evaluates the board fresh.
 
 ## Concurrency / idempotency — never double-spawn
 
-The single stable instance id makes this a **describe-before-start** check:
+There is no stable instance id to read any more, so the guard is a **tag scan**:
 
-- Before starting, the Lambda calls describe on the supervisor instance. Start **only** if it is in
-  the `stopped` state. If it is `running`, `pending`, or `stopping`, the Lambda does nothing this
-  tick — a burst is already in flight (or winding down) and will drain the board itself.
-- Because there is exactly **one** supervisor instance (started, never created, per burst),
-  "is one already running?" is a single state read, not a tag-scan or desired-count reconciliation.
-  Two overlapping Lambda invocations both see `running` (or one loses the start race harmlessly on a
-  no-op start of an already-starting box); neither creates a second worker.
+- Before launching, the Lambda calls `DescribeInstances` filtered on the supervisor tag and on
+  instance states `pending`, `running`, `stopping` and `shutting-down`. It launches **only** on a
+  zero-length result. A non-empty result means a burst is already in flight (or winding down) and
+  will drain the board itself.
+- **Lambda reserved concurrency 1** backs that up: two ticks cannot overlap in the first place, so
+  the tag scan never races against another copy of itself.
 - The board itself is the second line of defense: the runner **claims** each node, so even in a
-  pathological double-start no node is worked twice. The concurrency check prevents paying for two
-  VMs; the claim prevents duplicated *work*.
+  pathological double-spawn no node is worked twice. The tag scan and reserved concurrency prevent
+  paying for two VMs; the claim prevents duplicated *work*.
 
-This is a **single-worker v1 by design** — one VM draining the recommended set serially, matching
-the loop's own serial, single-session model. Parallel workers are a scale concern for later, not v1.
+This is a **single-worker v1 by design** — one instance draining the recommended set serially,
+matching the loop's own serial, single-session model. Parallel workers are a scale concern for
+later, not v1.
+
+## TTL reaper — the hung-loop backstop
+
+Terminate-on-idle means the **only** stop signal is the loop exiting cleanly. A loop that hangs
+never exits, so it never powers off, so it bills until someone notices. That is the one failure
+mode this model introduces that the old one did not have.
+
+- The **same Lambda**, on the same tick, reaps: `DescribeInstances` on the supervisor tag already
+  returns launch times, so before (or alongside) the spawn decision it calls `TerminateInstances`
+  on any supervisor instance older than the TTL.
+- No new infrastructure, no watchdog on the box, no extra schedule — it rides the tick that already
+  exists.
+- **Placeholder TTL: 2 hours**, env-tunable. The real number is tuned at implementation against
+  observed burst length (`4f1d9719` owns interval/backoff tuning generally).
 
 ## Reconciliation
 
 - **Hosting model (`hosting-model.md`, raw VM).** Fully consistent: the worker is a raw VM with
   full root, hosting the sessions exactly as decided. The Lambda is *operating* infrastructure
-  (trigger + power switch), not a session host — it never runs a Claude Code session, so the
+  (trigger + lifecycle), not a session host — it never runs a Claude Code session, so the
   "managed compute can't host sessions" rejection doesn't apply to it. Lambda triggering, VM
   hosting.
 - **Lifecycle & rolling updates (`5039267c`, drain-then-replace).** No conflict, and deliberately
-  minimal overlap for v1. Start/stop of one instance is orthogonal to drain-then-replace: draining
+  minimal overlap for v1. Per-burst launch/terminate is orthogonal to drain-then-replace: draining
   is about swapping the *image/harness* under active sessions without killing them, which happens
-  **while a VM is running**, not at start/stop. When `5039267c` lands, the operating model evolves
-  cleanly — the "start a stopped instance" mechanism is the natural place drain-then-replace plugs
-  in (bring up a new immutable-image instance, let the old one finish, retire it), and that is
-  exactly the point at which the **prebaked-AMI** launch option above becomes the better mechanism.
-  v1 does not need it; the seam is left open, not closed.
+  **while an instance is running**, not at launch or teardown. The seam is left open, not closed —
+  when `5039267c` lands it plugs in at the same place (bring up a replacement instance, let the old
+  one finish, retire it), and a baked image would just change what the launch template points at.
 
-## Handoff notes — what the merge breaks down into
+## Handoff notes — what this breaks down into
 
-On merge this node returns to `awaiting_agent_breakdown` (it is a `breakdown_on_merge` node). The
-follow-on work this decision implies:
-
-- **Terraform: supervisor VM + Lambda + schedule.** One stopped, pre-provisioned VM instance; the
-  scheduled Lambda and its EventBridge cron rule; the Lambda's scoped role (board read +
-  start/describe the one instance); the VM's own permission to stop itself. Sits under the
-  VM-bootstrap/deployment infra work (`8276b707`).
-- **Lambda function: cheap board check + guarded start.** Read `aj tasks --json`, filter to
-  unattempted recommended, describe-before-start concurrency guard, start the instance. Stateless,
-  no task execution.
-- **VM boot integration.** The boot unit (systemd oneshot or equivalent) that runs the `loop`
-  entrypoint on start and issues self-stop on the loop's clean exit-0 — the concrete wiring of the
-  loop's summary contract to the power-off.
-- **Reconcile with idle-backoff (`4f1d9719`)** when it lands: the cron interval and any per-burst
-  backoff are that node's to tune; this design fixes only the coarse-poll shape.
+This node is **not** a `breakdown_on_merge` node — it records a call already made, and the
+follow-on work is already split as the other children of `2f94026e` (Lambda function, Terraform for
+the Lambda + schedule + scoped role + board-credential secret, spend guard, ci-apply IAM widening,
+and the human-only board-account setup). See that node's children for the current list; do not
+re-split from here.
