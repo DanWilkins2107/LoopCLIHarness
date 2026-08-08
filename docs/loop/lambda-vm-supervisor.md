@@ -1,6 +1,6 @@
 # Lambda-triggered VM supervisor architecture
 
-**Status:** Decided (v2 — supersedes v1 start-stopped-VM)
+**Status:** Decided
 **Decision:** Operate the loop as a **scheduled Lambda that spawns an ephemeral VM**.
 An EventBridge cron fires a cheap Lambda that reads the board (`aj tasks --json`); when
 unattempted recommended work exists and no supervisor instance is already alive, it issues
@@ -11,15 +11,6 @@ instance exists between bursts; no long-lived daemon.
 This node decides how the loop is *operated*. It changes no loop code: the supervisor's
 existing contract — run to completion, then **exit 0 with a machine-readable summary** when no
 unattempted recommended task remains — is the only seam this design leans on.
-
-> **v2 note.** v1 of this document specified starting a single long-lived instance that had been
-> created once and left stopped. That was superseded by the terminate+recreate call on `f793bb1c`
-> (PR 20), which shipped `aws_launch_template` with
-> `instance_initiated_shutdown_behavior = terminate` and a `delete_on_termination` gp3 root
-> (`terraform/modules/vm/main.tf`). There is no standing instance and no stable instance id;
-> nothing survives a burst. The box sits in a private subnet behind NAT with no public IP,
-> reachable only via SSM, and re-provisions from `user_data` on every boot. This document now
-> matches that.
 
 ## What we are operating
 
@@ -76,7 +67,7 @@ Run the loop (and the Claude Code sessions it drives) inside Lambda itself.
   persistent interactive shell. A Claude Code session violates every one of those. Lambda can
   *trigger* the work; it cannot *host* it. Rejected.
 
-## v1 recommendation
+## Recommendation
 
 **A scheduled Lambda that launches a fresh instance from the VM launch template per burst
 (option 2).** It is the only option that pays zero compute *and zero storage* between bursts while
@@ -110,17 +101,16 @@ entire integration seam.
 loop is done** (not starting an instance that was left stopped, not Terraform create/destroy per
 burst).
 
-- **Launch from the launch template per burst — chosen.** Terraform owns the `aws_launch_template`
-  (AMI, instance type, security group, instance profile, encrypted gp3 root, `user_data`); the
-  Lambda calls `RunInstances` against it and tags the result with the supervisor tag. Because the
-  template sets `instance_initiated_shutdown_behavior = terminate` and the root volume is
-  `delete_on_termination`, the loop's own `poweroff` is a full teardown — instance and disk both
-  go. Between bursts there is nothing to pay for and nothing to drift.
-- **Start an instance left stopped — rejected (was v1's choice).** Keeping one instance created
-  once and started per burst pays standing EBS (and any attached address) forever, keeps mutable
-  state alive across bursts so the box drifts from `user_data`, and needs `ec2:StartInstances` plus
-  a stable instance id in the Lambda's contract. Terminate-on-idle is what shipped, and it is
-  strictly cheaper and strictly more reproducible.
+- **Launch from the launch template per burst — chosen.** Terraform owns the launch template; the
+  Lambda calls `RunInstances` against it and tags the result with the supervisor tag. The template
+  is configured to terminate on an instance-initiated shutdown and to delete the root volume with
+  it, which is what makes the loop's own `poweroff` a full teardown — instance and disk both go.
+  Between bursts there is nothing to pay for and nothing to drift.
+- **Start an instance left stopped — rejected.** Keeping one instance created once and started per
+  burst pays standing EBS (and any attached address) forever, keeps mutable state alive across
+  bursts so the box drifts from `user_data`, and needs `ec2:StartInstances` plus a stable instance
+  id in the Lambda's contract. Terminate-on-idle is strictly cheaper and strictly more
+  reproducible.
 - **Terraform create/destroy per burst — rejected.** Putting `terraform apply`/`destroy` on the
   hot path means the Lambda mutates infrastructure state on every burst: slow, race-prone against
   concurrent applies, and it drags the full IaC toolchain into a function that should only make one
@@ -136,9 +126,9 @@ burst).
 3. The loop **runs to completion and exits 0 with its summary** when no unattempted recommended
    task remains. That exit is the **only seam**: the boot unit waits on it and, on a clean exit,
    issues `poweroff`.
-4. `instance_initiated_shutdown_behavior = terminate` turns that shutdown into a termination, and
-   `delete_on_termination` takes the root volume with it. Cost between bursts is zero — no
-   instance, no EBS, no address.
+4. The launch template's terminate-on-shutdown behaviour turns that `poweroff` into a termination
+   and takes the root volume with it. Cost between bursts is zero — no instance, no EBS, no
+   address.
 
 The loop's `asked_user` / `errored` outcomes need no special operating handling — they resolve on
 the board (human turn, or surfaced error), the loop still exits 0 when nothing recommended remains,
