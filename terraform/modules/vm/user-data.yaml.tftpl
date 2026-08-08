@@ -25,7 +25,10 @@ runcmd:
   # Dev dependencies are runtime here — both packages start via tsx.
   - npm --prefix /opt/loopcliharness/runner ci
   - npm --prefix /opt/loopcliharness/supervisor ci
-  # Placed, deliberately not enabled — the box must not start working on boot until
-  # auth and the self-stop wiring land (AgentJira 600ec9e2); see deploy/README.md.
   - install -m 0644 /opt/loopcliharness/deploy/supervisor-loop.service /etc/systemd/system/supervisor-loop.service
   - systemctl daemon-reload
+  - systemctl enable supervisor-loop.service
+  # runcmd runs inside cloud-final, past multi-user.target, so WantedBy never fires this
+  # boot — start it explicitly. --no-block: a Type=oneshot start would hold cloud-init
+  # open for the loop's entire run.
+  - systemctl start --no-block supervisor-loop.service
