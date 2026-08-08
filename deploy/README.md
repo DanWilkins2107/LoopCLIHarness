@@ -4,12 +4,9 @@
 
 Behaviour is documented in the unit file itself. VM boot
 (`terraform/modules/vm/user-data.yaml.tftpl`) clones the repo to `/opt/loopcliharness`,
-installs both npm toolchains, and copies this unit into `/etc/systemd/system/` — it
-stops short of enabling it, so the box provisions without running work:
+installs both npm toolchains, copies this unit into `/etc/systemd/system/`, then enables
+and starts it — the box begins working as soon as it boots.
 
-```sh
-systemctl enable supervisor-loop.service            # run on boot
-```
-
-Enabling is owned by AgentJira `600ec9e2`. `aj` is not installed by boot yet (auth
-nodes `02ee3d7b` / `71dc00bb` / `95041f51`), so the loop cannot run until those land.
+`aj` is not installed by boot yet (AgentJira `84f75a16`), so the loop aborts and exits 0.
+The unit powers off on any exit, and the launch template terminates on guest poweroff with
+the root volume deleted — so an unusable box tears itself down rather than idling.

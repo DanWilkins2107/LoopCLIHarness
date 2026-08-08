@@ -125,7 +125,10 @@ data "aws_iam_policy_document" "ci_apply" {
     condition {
       test     = "StringEquals"
       variable = "iam:PolicyARN"
-      values   = ["arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"]
+      values = [
+        "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+        "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+      ]
     }
   }
 
@@ -154,8 +157,112 @@ data "aws_iam_policy_document" "ci_apply" {
     condition {
       test     = "StringEquals"
       variable = "iam:PassedToService"
-      values   = ["ec2.amazonaws.com"]
+      values   = ["ec2.amazonaws.com", "lambda.amazonaws.com"]
     }
+  }
+
+  statement {
+    sid       = "IamRoleInline"
+    effect    = "Allow"
+    actions   = ["iam:PutRolePolicy", "iam:GetRolePolicy", "iam:DeleteRolePolicy"]
+    resources = ["arn:aws:iam::${var.account_id}:role/${var.name_prefix}-*"]
+  }
+
+  statement {
+    sid    = "Lambda"
+    effect = "Allow"
+    actions = [
+      "lambda:CreateFunction",
+      "lambda:DeleteFunction",
+      "lambda:GetFunction",
+      "lambda:GetFunctionConfiguration",
+      "lambda:UpdateFunctionCode",
+      "lambda:UpdateFunctionConfiguration",
+      "lambda:ListVersionsByFunction",
+      "lambda:PutFunctionConcurrency",
+      "lambda:DeleteFunctionConcurrency",
+      "lambda:AddPermission",
+      "lambda:RemovePermission",
+      "lambda:GetPolicy",
+      "lambda:TagResource",
+      "lambda:UntagResource",
+      "lambda:ListTags",
+    ]
+    resources = ["arn:aws:lambda:${var.region}:${var.account_id}:function:${var.name_prefix}-*"]
+  }
+
+  statement {
+    sid    = "Events"
+    effect = "Allow"
+    actions = [
+      "events:PutRule",
+      "events:DeleteRule",
+      "events:DescribeRule",
+      "events:EnableRule",
+      "events:DisableRule",
+      "events:PutTargets",
+      "events:RemoveTargets",
+      "events:ListTargetsByRule",
+      "events:TagResource",
+      "events:UntagResource",
+      "events:ListTagsForResource",
+    ]
+    resources = ["arn:aws:events:${var.region}:${var.account_id}:rule/${var.name_prefix}-*"]
+  }
+
+  statement {
+    sid    = "Secrets"
+    effect = "Allow"
+    actions = [
+      "secretsmanager:CreateSecret",
+      "secretsmanager:DeleteSecret",
+      "secretsmanager:DescribeSecret",
+      "secretsmanager:UpdateSecret",
+      "secretsmanager:GetResourcePolicy",
+      "secretsmanager:TagResource",
+      "secretsmanager:UntagResource",
+    ]
+    resources = ["arn:aws:secretsmanager:${var.region}:${var.account_id}:secret:${var.name_prefix}-*"]
+  }
+
+  statement {
+    sid       = "Budgets"
+    effect    = "Allow"
+    actions   = ["budgets:ViewBudget", "budgets:ModifyBudget"]
+    resources = ["arn:aws:budgets::${var.account_id}:budget/${var.name_prefix}-*"]
+  }
+
+  # us-east-1, not var.region: AWS Budgets only publishes to us-east-1 topics, so
+  # terraform/spend-guard.tf creates the topic behind an aliased provider.
+  statement {
+    sid    = "Sns"
+    effect = "Allow"
+    actions = [
+      "sns:CreateTopic",
+      "sns:DeleteTopic",
+      "sns:GetTopicAttributes",
+      "sns:SetTopicAttributes",
+      "sns:Subscribe",
+      "sns:ListSubscriptionsByTopic",
+      "sns:TagResource",
+      "sns:UntagResource",
+      "sns:ListTagsForResource",
+    ]
+    resources = ["arn:aws:sns:us-east-1:${var.account_id}:${var.name_prefix}-*"]
+  }
+
+  statement {
+    sid       = "SnsUnsubscribe"
+    effect    = "Allow"
+    actions   = ["sns:Unsubscribe"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "DenySecretValue"
+    effect    = "Deny"
+    actions   = ["secretsmanager:GetSecretValue", "secretsmanager:PutSecretValue"]
+    resources = ["arn:aws:secretsmanager:${var.region}:${var.account_id}:secret:${var.name_prefix}-*"]
   }
 
   statement {
