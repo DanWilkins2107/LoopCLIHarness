@@ -4,6 +4,10 @@ Stateless Lambda invoked on a cron. Each tick it reaps over-age supervisor
 instances and, when none is live and the board has recommended work, launches
 one from the supervisor launch template. It never runs a task itself.
 
+Read `handler.ts` for the whole tick. Top-level modules are the flow and the
+rules worth reviewing (`handler` → `decide` / `board` → `recommended`);
+`helpers/` is the EC2, Secrets Manager and Supabase plumbing they call.
+
 ## Configuration
 
 Environment (validated with zod at module load — see `env.ts`):
