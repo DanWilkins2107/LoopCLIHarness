@@ -30,8 +30,17 @@ resource "aws_sns_topic_policy" "spend_alerts" {
   policy   = data.aws_iam_policy_document.spend_alerts.json
 }
 
-# Email subscription is added and confirmed by hand: the repo is public, so no
-# address lives in the tree.
+# The address is in the tree deliberately. The repo is public, but this address
+# already authors most of its commit history, and an SNS destination is not a
+# credential. Terraform cannot confirm the subscription: it stays in
+# PendingConfirmation until the link is clicked by hand (node 8a076125).
+resource "aws_sns_topic_subscription" "spend_alerts_email" {
+  provider  = aws.us_east_1
+  topic_arn = aws_sns_topic.spend_alerts.arn
+  protocol  = "email"
+  endpoint  = "danwilkins2003@gmail.com"
+}
+
 resource "aws_budgets_budget" "monthly" {
   name         = "${local.name_prefix}-monthly"
   budget_type  = "COST"
