@@ -71,3 +71,25 @@ jobs:
           node-version: '22'
 
       - run: npx --yes fallow@3.10.0 health --complexity
+
+  mutation:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [runner, supervisor]
+    defaults:
+      run:
+        working-directory: ${{ matrix.package }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ${{ matrix.package }}/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run mutation
