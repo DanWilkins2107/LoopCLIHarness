@@ -120,6 +120,10 @@ describe("buildBwrapArgs", () => {
       expect(hasSeq(args, ["--ro-bind", p, p])).toBe(true);
   });
 
+  it("falls back to the real fs when no exists seam is given", () => {
+    expect(() => buildBwrapArgs("claude", [], { env: env() })).not.toThrow();
+  });
+
   it("puts the inner command and its args last", () => {
     expect(build().slice(-3)).toEqual(["claude", "--print", "hello"]);
   });

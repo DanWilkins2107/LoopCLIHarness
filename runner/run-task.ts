@@ -1,4 +1,5 @@
-import { spawnTool, wireSessionOutput, sessionReportedError } from "./session";
+import { spawn } from "node:child_process";
+import { wireSessionOutput, sessionReportedError } from "./session";
 import { parseSandboxEnv, buildBwrapArgs, type SandboxEnv } from "./sandbox";
 import {
   CLAUDE_ARGS,
@@ -65,10 +66,12 @@ function runSession(
     `session sandboxed via bwrap (workdir=${sandboxEnv.LOOP_SESSION_WORKDIR})`,
   );
   return new Promise((resolve) => {
-    const child = spawnTool("bwrap", bwrapArgs, ["pipe", "pipe", "pipe"]);
-    child.stdin?.on("error", () => {});
-    child.stdin?.write(buildPrompt(nodeId));
-    child.stdin?.end();
+    const child = spawn("bwrap", bwrapArgs, {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    child.stdin.on("error", () => {});
+    child.stdin.write(buildPrompt(nodeId));
+    child.stdin.end();
 
     const getStdout = wireSessionOutput(child);
 
@@ -91,13 +94,11 @@ function sandboxPreflight(): Promise<
   { ok: true } | { ok: false; detail: string }
 > {
   return new Promise((resolve) => {
-    const child = spawnTool(
-      "bwrap",
-      ["--version"],
-      ["ignore", "ignore", "pipe"],
-    );
+    const child = spawn("bwrap", ["--version"], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
     let err = "";
-    child.stderr?.on("data", (d) => (err += d));
+    child.stderr.on("data", (d) => (err += d));
     child.on("error", (e) =>
       resolve({
         ok: false,
@@ -117,14 +118,12 @@ function sandboxPreflight(): Promise<
 
 function queryNodeStatus(nodeId: string): Promise<string | null> {
   return new Promise((resolve) => {
-    const child = spawnTool(
-      "aj",
-      ["context", nodeId, "--json"],
-      ["ignore", "pipe", "pipe"],
-    );
+    const child = spawn("aj", ["context", nodeId, "--json"], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let out = "";
-    child.stdout?.on("data", (d) => (out += d));
-    child.stderr?.on("data", (d) => process.stderr.write(d));
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => process.stderr.write(d));
     child.on("error", () => resolve(null));
     child.on("close", () => {
       try {

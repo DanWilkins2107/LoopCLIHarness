@@ -19,7 +19,7 @@ export function parseSandboxEnv(env: NodeJS.ProcessEnv): EnvResult {
   const parsed = SandboxEnvSchema.safeParse(env);
   if (parsed.success) return { ok: true, env: parsed.data };
   const detail = parsed.error.issues
-    .map((i) => `${i.path.join(".") || "(env)"}: ${i.message}`)
+    .map((i) => `${i.path.join(".")}: ${i.message}`)
     .join("; ");
   return { ok: false, detail };
 }
