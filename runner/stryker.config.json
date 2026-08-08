@@ -5,6 +5,8 @@
   "mutate": [
     "*.ts",
     "!*.test.ts",
+    "!vitest.config.ts",
+    "!test-harness.ts",
     "!entrypoint.ts",
     "!run-task.ts",
     "!run-judge.ts",
