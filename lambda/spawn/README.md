@@ -28,9 +28,11 @@ invoke time — never an environment literal.
 
 ## Build
 
+From the repo root (this is an npm workspace):
+
 ```bash
 npm ci
-npm run build   # esbuild bundle -> dist/index.js
+npm run build -w lambda/spawn   # esbuild bundle -> dist/index.js
 ```
 
 Deployed as handler `index.handler` on `nodejs22`. Packaging `dist/` and

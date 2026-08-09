@@ -22,13 +22,6 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/node": "^20.11.0",
-    "@vitest/coverage-v8": "^4.1.10",
-    "esbuild": "^0.25.0",
-    "eslint": "^10.8.0",
-    "prettier": "^3.9.6",
-    "typescript": "^5.4.0",
-    "typescript-eslint": "^8.65.0",
-    "vitest": "^4.1.10"
+    "esbuild": "^0.25.0"
   }
 }

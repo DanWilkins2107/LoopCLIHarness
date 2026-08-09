@@ -6,6 +6,8 @@ on:
       - 'runner/**'
       - 'supervisor/**'
       - 'lambda/spawn/**'
+      - 'package.json'
+      - 'package-lock.json'
       - '.fallowrc.json'
       - '.github/workflows/node.yml'
 
@@ -19,9 +21,6 @@ jobs:
       fail-fast: false
       matrix:
         package: [runner, supervisor, lambda/spawn]
-    defaults:
-      run:
-        working-directory: ${{ matrix.package }}
     steps:
       - uses: actions/checkout@v4
 
@@ -29,13 +28,13 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: ${{ matrix.package }}/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - run: npm ci
 
-      - run: npm run typecheck
+      - run: npm run typecheck -w ${{ matrix.package }}
 
-      - run: npm test
+      - run: npm test -w ${{ matrix.package }}
 
   lint:
     runs-on: ubuntu-latest
@@ -43,9 +42,6 @@ jobs:
       fail-fast: false
       matrix:
         package: [runner, supervisor, lambda/spawn]
-    defaults:
-      run:
-        working-directory: ${{ matrix.package }}
     steps:
       - uses: actions/checkout@v4
 
@@ -53,13 +49,13 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: ${{ matrix.package }}/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - run: npm ci
 
-      - run: npm run lint
+      - run: npm run lint -w ${{ matrix.package }}
 
-      - run: npm run format:check
+      - run: npm run format:check -w ${{ matrix.package }}
 
   complexity:
     runs-on: ubuntu-latest
@@ -78,9 +74,6 @@ jobs:
       fail-fast: false
       matrix:
         package: [runner, supervisor]
-    defaults:
-      run:
-        working-directory: ${{ matrix.package }}
     steps:
       - uses: actions/checkout@v4
 
@@ -88,8 +81,8 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: ${{ matrix.package }}/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - run: npm ci
 
-      - run: npm run mutation
+      - run: npm run mutation -w ${{ matrix.package }}
