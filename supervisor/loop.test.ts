@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { EventEmitter } from "node:events";
 import type { ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
+import { fakeChild, type Script } from "../test-helpers/fake-child";
 import {
   RESET_MARGIN_S,
   LIMIT_COOLDOWN_S,
@@ -23,11 +23,7 @@ vi.mock("./backoff", async (importOriginal) => ({
 const NODE = "n1";
 const ARGV = process.argv;
 
-interface Script {
-  stdout?: string;
-  stderr?: string;
-  code?: number | null;
-  error?: string;
+interface LoopScript extends Script {
   onSpawn?: () => void;
 }
 
@@ -40,30 +36,26 @@ const raise = (sig: string) => (signals[sig] ?? []).forEach((h) => h());
 // and the two readable ends are EventEmitters the test drives directly.
 type LoopChild = ChildProcessByStdio<null, Readable, Readable>;
 
-function fakeChild(): LoopChild {
-  return Object.assign(new EventEmitter(), {
-    stdout: new EventEmitter(),
-    stderr: new EventEmitter(),
-  }) as unknown as LoopChild;
-}
-
 // process.exit never returns, so `unwind` makes the stub throw for the one test
 // where main exits somewhere other than its final line.
 class ExitSignal extends Error {}
 
-const idle = (): Script => ({ stdout: '{"recommended":[]}' });
-const recommend = (title?: string): Script => ({
+const idle = (): LoopScript => ({ stdout: '{"recommended":[]}' });
+const recommend = (title?: string): LoopScript => ({
   stdout: JSON.stringify({ recommended: [{ id: NODE, title }] }),
 });
-const outcome = (o: string, extra: Record<string, unknown> = {}): Script => ({
+const outcome = (
+  o: string,
+  extra: Record<string, unknown> = {},
+): LoopScript => ({
   stdout: `noise\n${JSON.stringify({ outcome: o, detail: "d", ...extra })}\n`,
   stderr: "runner chatter\n",
 });
 
 interface RunOptions {
   argv?: string[];
-  tasks?: Script[];
-  runs?: Script[];
+  tasks?: LoopScript[];
+  runs?: LoopScript[];
   spawnThrows?: unknown;
   unwind?: boolean;
 }
@@ -114,7 +106,7 @@ async function run(opts: RunOptions = {}) {
     if (opts.spawnThrows) throw opts.spawnThrows;
     spawns.push([bin, args]);
     const s = (bin === "aj" ? tasks.shift() : runs.shift()) ?? idle();
-    const child = fakeChild();
+    const child = fakeChild() as unknown as LoopChild;
     s.onSpawn?.();
     setImmediate(() => {
       if (s.error) return void child.emit("error", new Error(s.error));

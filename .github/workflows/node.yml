@@ -5,6 +5,7 @@ on:
     paths:
       - 'runner/**'
       - 'supervisor/**'
+      - 'test-helpers/**'
       - 'package.json'
       - 'package-lock.json'
       - '.fallowrc.json'

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { spawn } from "node:child_process";
 import { makeLog, emitResult, preflight } from "./entrypoint";
-import { fakeChild } from "./test-harness";
+import { pipedChild } from "./test-harness";
 import type { PipedChild } from "./session";
 
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
@@ -11,7 +11,7 @@ afterEach(() => vi.restoreAllMocks());
 
 // Drive preflight to completion by emitting on the child it spawned.
 function runPreflight(drive: (child: PipedChild) => void) {
-  const child = fakeChild();
+  const child = pipedChild();
   vi.mocked(spawn).mockReturnValue(child);
   const result = preflight();
   drive(child);

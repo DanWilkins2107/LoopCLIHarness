@@ -1,22 +1,15 @@
 import { EventEmitter } from "node:events";
 import { expect, vi, type Mock } from "vitest";
+import { fakeChild, type Script } from "../test-helpers/fake-child";
 import type { PipedChild } from "./session";
 
-export interface Script {
-  stdout?: string;
-  stderr?: string;
-  code?: number | null;
-  error?: string;
-}
+export type { Script };
 
-// A ChildProcess stand-in for the spawn mock: EventEmitters in place of the
-// three stdio streams, so a test drives a child by emitting on it. Typed as a
-// fully piped child — fds the caller ignored are simply never listened to.
-export function fakeChild(): PipedChild {
-  const child = new EventEmitter();
-  return Object.assign(child, {
-    stdout: new EventEmitter(),
-    stderr: new EventEmitter(),
+// The runner spawns with stdin piped, so the shared fake gains one here and is
+// typed as a fully piped child — fds the caller ignored are simply never
+// listened to.
+export function pipedChild(): PipedChild {
+  return Object.assign(fakeChild(), {
     // The no-op "error" listener keeps an unhandled emit from throwing on the
     // spawns whose caller ignores stdin.
     stdin: Object.assign(
@@ -61,7 +54,7 @@ export function scriptedSpawn(scripts: Script[]) {
   const spawns: [string, string[]][] = [];
   const impl = (bin: string, args: string[]) => {
     spawns.push([bin, args]);
-    const child = fakeChild();
+    const child = pipedChild();
     // Callers supply exactly one script per expected spawn; an unscripted spawn
     // is a bug in the test, and blows up here rather than passing silently.
     const s = remaining.shift() as Script;
