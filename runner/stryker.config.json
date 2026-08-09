@@ -12,5 +12,5 @@
     "!run-judge.ts",
     "!session.ts"
   ],
-  "thresholds": { "high": 100, "low": 0, "break": 80 }
+  "thresholds": { "high": 100, "low": 0, "break": 95.3 }
 }
