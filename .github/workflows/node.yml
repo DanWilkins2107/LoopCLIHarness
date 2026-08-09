@@ -7,6 +7,9 @@ on:
       - 'supervisor/**'
       - 'package.json'
       - 'package-lock.json'
+      - 'tsconfig.base.json'
+      - 'eslint.config.base.mjs'
+      - 'stryker.config.base.mjs'
       - '.fallowrc.json'
       - '.github/workflows/node.yml'
 
