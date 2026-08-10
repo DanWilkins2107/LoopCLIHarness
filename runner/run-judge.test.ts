@@ -69,7 +69,19 @@ describe("verdicts", () => {
       verdict: "proceed",
       reason: "settled",
     });
-    expect(spawns[0][0]).toBe("claude");
+    // Literal, not CLAUDE_ARGS: this locks the claude CLI contract the runner's
+    // output parsing depends on.
+    expect(spawns[0]).toEqual([
+      "claude",
+      [
+        "--print",
+        "--permission-mode",
+        "auto",
+        "--no-session-persistence",
+        "--output-format",
+        "json",
+      ],
+    ]);
   });
 
   it("reads a verdict from raw stdout when the envelope is malformed", async () => {
