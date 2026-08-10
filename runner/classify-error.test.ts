@@ -28,8 +28,14 @@ describe("classifyError", () => {
     ["non-JSON output", "the session crashed\nno envelope here"],
     ["an envelope with no string result", JSON.stringify({ is_error: true })],
     ["a result matching no pattern", envelope("node done")],
+    ["a bare JSON null line", "null"],
   ])("returns unknown for %s", (_label, stdout) => {
     expect(classifyError(stdout)).toEqual({ outcome: "unknown" });
+  });
+
+  it("skips an envelope whose result is not a string", () => {
+    const stdout = [envelope("read ECONNRESET"), '{"result": 42}'].join("\n");
+    expect(classifyError(stdout)).toEqual({ outcome: "api_error" });
   });
 
   it("uses the last valid envelope when several are present", () => {

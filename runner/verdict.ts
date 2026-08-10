@@ -17,15 +17,17 @@ function parseCandidate(json: string): VerdictResult | null {
   } catch {
     return null;
   }
-  const verdict = obj?.verdict;
+  const verdict = obj.verdict;
   if (verdict !== "proceed" && verdict !== "not_yet") return null;
   return { verdict, reason: reasonText(obj.reason) };
 }
 
 // Last well-formed flat JSON object mentioning "verdict"; null if none valid.
+// The brace-delimited pattern guarantees a successful parse is an object; if it
+// is ever loosened, parseCandidate needs its null/non-object guard back.
 export function extractVerdict(text: string): VerdictResult | null {
-  const matches = text.match(/\{[^{}]*"verdict"[^{}]*\}/g) ?? [];
-  for (const json of [...matches].reverse()) {
+  const matches = [...text.matchAll(/\{[^{}]*"verdict"[^{}]*\}/g)].reverse();
+  for (const [json] of matches) {
     const parsed = parseCandidate(json);
     if (parsed) return parsed;
   }
