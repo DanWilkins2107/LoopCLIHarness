@@ -1,23 +1,5 @@
-import { EventEmitter } from "node:events";
 import { expect, vi, type Mock } from "vitest";
 import { fakeChild, type Script } from "../test-helpers/fake-child";
-import type { PipedChild } from "./session";
-
-// The runner spawns with stdin piped too, so the shared fake gains one here —
-// that stdin is the only difference between the two.
-export function pipedChild(): PipedChild {
-  return Object.assign(fakeChild(), {
-    // The no-op "error" listener keeps an unhandled emit from throwing on the
-    // spawns whose caller ignores stdin.
-    stdin: Object.assign(
-      new EventEmitter().on("error", () => {}),
-      {
-        write: () => true,
-        end: () => {},
-      },
-    ),
-  }) as unknown as PipedChild;
-}
 
 // process.exit never returns, so the stub throws to unwind main the way the real
 // thing does. The module's top-level .catch then exits once more on its way out —
@@ -51,7 +33,7 @@ export function scriptedSpawn(scripts: Script[]) {
   const spawns: [string, string[]][] = [];
   const impl = (bin: string, args: string[]) => {
     spawns.push([bin, args]);
-    const child = pipedChild();
+    const child = fakeChild();
     // Callers supply exactly one script per expected spawn; an unscripted spawn
     // is a bug in the test, and blows up here rather than passing silently.
     const s = remaining.shift() as Script;

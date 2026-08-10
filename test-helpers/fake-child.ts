@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { ChildProcessByStdio } from "node:child_process";
-import type { Readable } from "node:stream";
+import type { Readable, Writable } from "node:stream";
 
 export interface Script {
   stdout?: string;
@@ -10,12 +10,16 @@ export interface Script {
 }
 
 // A ChildProcess stand-in for the spawn mock: EventEmitters in place of the
-// stdio streams, so a test drives a child by emitting on it. Typed as the
-// stdio: ["ignore", "pipe", "pipe"] child both packages' code spawns; the runner
-// wraps this to add the stdin it also pipes.
-export function fakeChild(): ChildProcessByStdio<null, Readable, Readable> {
+// stdio streams, so a test drives a child by emitting on it. The no-op "error"
+// listener on stdin keeps an unhandled emit from throwing for the callers that
+// pipe stdin but ignore it.
+export function fakeChild(): ChildProcessByStdio<Writable, Readable, Readable> {
   return Object.assign(new EventEmitter(), {
     stdout: new EventEmitter(),
     stderr: new EventEmitter(),
-  }) as unknown as ChildProcessByStdio<null, Readable, Readable>;
+    stdin: Object.assign(new EventEmitter().on("error", () => {}), {
+      write: () => true,
+      end: () => {},
+    }),
+  }) as unknown as ChildProcessByStdio<Writable, Readable, Readable>;
 }

@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { wireSessionOutput, sessionReportedError } from "./session";
-import { pipedChild } from "./test-harness";
+import { fakeChild } from "../test-helpers/fake-child";
 
 afterEach(() => vi.restoreAllMocks());
 
 describe("wireSessionOutput", () => {
   it("accumulates stdout and mirrors both streams to stderr", () => {
     const write = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    const child = pipedChild();
+    const child = fakeChild();
     const getStdout = wireSessionOutput(child);
 
     expect(getStdout()).toBe("");
