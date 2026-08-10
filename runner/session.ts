@@ -22,7 +22,7 @@ export function wireSessionOutput(child: PipedChild): () => string {
 // here; callers decide what a missing/garbled envelope means for them.
 export function sessionReportedError(stdout: string): boolean {
   try {
-    return JSON.parse(stdout)?.is_error === true;
+    return JSON.parse(stdout).is_error === true;
   } catch {
     return false;
   }
