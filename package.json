@@ -2,7 +2,7 @@
   "name": "loopcliharness",
   "version": "0.1.0",
   "private": true,
-  "workspaces": ["runner", "supervisor"],
+  "workspaces": ["runner", "supervisor", "lambda/spawn"],
   "engines": {
     "node": ">=18"
   },
