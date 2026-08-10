@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { EventEmitter } from "node:events";
-import type { ChildProcessByStdio } from "node:child_process";
-import type { Readable } from "node:stream";
+import { fakeChild, type Script } from "../test-helpers/fake-child";
 import {
   RESET_MARGIN_S,
   LIMIT_COOLDOWN_S,
@@ -51,11 +49,7 @@ function withDeadline(exited: Promise<void>): Promise<void> {
   return Promise.race([exited, deadline]).finally(() => clearTimeout(timer));
 }
 
-interface Script {
-  stdout?: string;
-  stderr?: string;
-  code?: number | null;
-  error?: string;
+interface LoopScript extends Script {
   onSpawn?: () => void;
 }
 
@@ -64,34 +58,26 @@ interface Script {
 let signals: Record<string, (() => void)[]> = {};
 const raise = (sig: string) => (signals[sig] ?? []).forEach((h) => h());
 
-// loop only ever spawns with stdio ["ignore", "pipe", "pipe"], so stdin is null
-// and the two readable ends are EventEmitters the test drives directly.
-type LoopChild = ChildProcessByStdio<null, Readable, Readable>;
-
-function fakeChild(): LoopChild {
-  return Object.assign(new EventEmitter(), {
-    stdout: new EventEmitter(),
-    stderr: new EventEmitter(),
-  }) as unknown as LoopChild;
-}
-
 // process.exit never returns, so `unwind` makes the stub throw for the one test
 // where main exits somewhere other than its final line.
 class ExitSignal extends Error {}
 
-const idle = (): Script => ({ stdout: '{"recommended":[]}' });
-const recommend = (title?: string): Script => ({
+const idle = (): LoopScript => ({ stdout: '{"recommended":[]}' });
+const recommend = (title?: string): LoopScript => ({
   stdout: JSON.stringify({ recommended: [{ id: NODE, title }] }),
 });
-const outcome = (o: string, extra: Record<string, unknown> = {}): Script => ({
+const outcome = (
+  o: string,
+  extra: Record<string, unknown> = {},
+): LoopScript => ({
   stdout: `noise\n${JSON.stringify({ outcome: o, detail: "d", ...extra })}\n`,
   stderr: "runner chatter\n",
 });
 
 interface RunOptions {
   argv?: string[];
-  tasks?: Script[];
-  runs?: Script[];
+  tasks?: LoopScript[];
+  runs?: LoopScript[];
   spawnThrows?: unknown;
   unwind?: boolean;
 }

@@ -6,6 +6,7 @@ on:
       - 'runner/**'
       - 'supervisor/**'
       - 'lambda/spawn/**'
+      - 'test-helpers/**'
       - 'package.json'
       - 'package-lock.json'
       - '.fallowrc.json'
