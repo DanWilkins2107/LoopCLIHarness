@@ -25,6 +25,11 @@ runcmd:
   # Dev dependencies are runtime here — both packages start via tsx.
   - npm --prefix /opt/loopcliharness/runner ci
   - npm --prefix /opt/loopcliharness/supervisor ci
+  - git clone --depth 1 https://github.com/DanWilkins2107/AgentJira.git /opt/agentjira
+  # dist/ is gitignored and tsc is a devDependency, so the CLI compiles here.
+  - npm --prefix /opt/agentjira/cli ci
+  - npm --prefix /opt/agentjira/cli run build
+  - npm i -g /opt/agentjira/cli
   - install -m 0644 /opt/loopcliharness/deploy/supervisor-loop.service /etc/systemd/system/supervisor-loop.service
   - systemctl daemon-reload
   - systemctl enable supervisor-loop.service
