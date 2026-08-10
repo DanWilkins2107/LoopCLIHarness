@@ -1,6 +1,4 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import type { ChildProcessByStdio } from "node:child_process";
-import type { Readable } from "node:stream";
 import { fakeChild, type Script } from "../test-helpers/fake-child";
 import {
   RESET_MARGIN_S,
@@ -31,10 +29,6 @@ interface LoopScript extends Script {
 // take the test runner down with it.
 let signals: Record<string, (() => void)[]> = {};
 const raise = (sig: string) => (signals[sig] ?? []).forEach((h) => h());
-
-// loop only ever spawns with stdio ["ignore", "pipe", "pipe"], so stdin is null
-// and the two readable ends are EventEmitters the test drives directly.
-type LoopChild = ChildProcessByStdio<null, Readable, Readable>;
 
 // process.exit never returns, so `unwind` makes the stub throw for the one test
 // where main exits somewhere other than its final line.
@@ -106,7 +100,7 @@ async function run(opts: RunOptions = {}) {
     if (opts.spawnThrows) throw opts.spawnThrows;
     spawns.push([bin, args]);
     const s = (bin === "aj" ? tasks.shift() : runs.shift()) ?? idle();
-    const child = fakeChild() as unknown as LoopChild;
+    const child = fakeChild();
     s.onSpawn?.();
     setImmediate(() => {
       if (s.error) return void child.emit("error", new Error(s.error));

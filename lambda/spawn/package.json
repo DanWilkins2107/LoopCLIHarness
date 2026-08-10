@@ -1,0 +1,27 @@
+{
+  "name": "@loopcliharness/lambda-spawn",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Scheduled Lambda: reaps over-age supervisor instances and spawns one when the board has recommended work and none is live.",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild handler.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/index.js",
+    "test": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format:check": "prettier --check \"**/*.ts\"",
+    "format": "prettier --write \"**/*.ts\""
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@aws-sdk/client-ec2": "^3.700.0",
+    "@aws-sdk/client-secrets-manager": "^3.700.0",
+    "@supabase/supabase-js": "^2.47.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

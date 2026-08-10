@@ -3,11 +3,8 @@ import { expect, vi, type Mock } from "vitest";
 import { fakeChild, type Script } from "../test-helpers/fake-child";
 import type { PipedChild } from "./session";
 
-export type { Script };
-
-// The runner spawns with stdin piped, so the shared fake gains one here and is
-// typed as a fully piped child — fds the caller ignored are simply never
-// listened to.
+// The runner spawns with stdin piped too, so the shared fake gains one here —
+// that stdin is the only difference between the two.
 export function pipedChild(): PipedChild {
   return Object.assign(fakeChild(), {
     // The no-op "error" listener keeps an unhandled emit from throwing on the

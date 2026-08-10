@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { driveEntry, type Script } from "./test-harness";
+import { type Script } from "../test-helpers/fake-child";
+import { driveEntry } from "./test-harness";
 
 const { spawnMock, preflightMock } = vi.hoisted(() => ({
   spawnMock: vi.fn(),
