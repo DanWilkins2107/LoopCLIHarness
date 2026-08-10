@@ -10,5 +10,5 @@ export default {
     "!run-judge.ts",
     "!session.ts",
   ],
-  thresholds: { high: 100, low: 0, break: 95.3 },
+  thresholds: { high: 100, low: 0, break: 100 },
 };
