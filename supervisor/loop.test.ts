@@ -30,6 +30,27 @@ const ARGV = process.argv;
 // node attempts, then the full idle window. A new longer test must raise this.
 const MAX_AJ_SPAWNS = MAX_RETRIES + 1 + IDLE_SHUTDOWN_S / IDLE_INTERVAL_S + 1;
 
+// A mutant can also strand a promise instead of spinning — drop a `done` call,
+// empty a close handler, rename an event — and loop.ts then sits idle, so the
+// spawn cap never trips. Vitest's own 5s timeout does catch it, but Stryker's
+// timeout races that and often wins, scoring a flaky timeout instead of a kill.
+// Failing well inside both makes it deterministic. Real runs take a few ms.
+const EXIT_DEADLINE_MS = 2000;
+
+function withDeadline(exited: Promise<void>): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new Error(`loop did not terminate: no exit in ${EXIT_DEADLINE_MS}ms`),
+        ),
+      EXIT_DEADLINE_MS,
+    );
+  });
+  return Promise.race([exited, deadline]).finally(() => clearTimeout(timer));
+}
+
 interface Script {
   stdout?: string;
   stderr?: string;
@@ -136,7 +157,7 @@ async function run(opts: RunOptions = {}) {
 
   vi.resetModules();
   await import("./loop");
-  await exited;
+  await withDeadline(exited);
 
   if (ajSpawns > MAX_AJ_SPAWNS)
     throw new Error(`loop did not terminate: exceeded ${MAX_AJ_SPAWNS} spawns`);
