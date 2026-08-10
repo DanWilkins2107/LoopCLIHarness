@@ -19,4 +19,7 @@ even while small):
 - [`supervisor/`](supervisor/) — `loop`, the deterministic supervisor: repeatedly
   runs the first recommended AgentJira task via the runner until none remain. No
   LLM, no accumulating context. See [`supervisor/README.md`](supervisor/README.md).
+- [`lambda/spawn/`](lambda/spawn/) — `spawn`, the scheduled Lambda: reaps over-age
+  supervisor instances and launches one when the board has work and none is live.
+  See [`lambda/spawn/README.md`](lambda/spawn/README.md).
 - [`docs/`](docs/) — design and decision docs.

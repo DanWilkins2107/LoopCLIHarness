@@ -5,6 +5,7 @@ on:
     paths:
       - 'runner/**'
       - 'supervisor/**'
+      - 'lambda/spawn/**'
       - 'package.json'
       - 'package-lock.json'
       - '.fallowrc.json'
@@ -19,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [runner, supervisor]
+        package: [runner, supervisor, lambda/spawn]
     steps:
       - uses: actions/checkout@v4
 
@@ -40,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [runner, supervisor]
+        package: [runner, supervisor, lambda/spawn]
     steps:
       - uses: actions/checkout@v4
 
