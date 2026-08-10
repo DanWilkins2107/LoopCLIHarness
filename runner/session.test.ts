@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { wireSessionOutput, sessionReportedError } from "./session";
-import { fakeChild } from "./test-harness";
+import { fakeChild } from "../test-helpers/fake-child";
 
 afterEach(() => vi.restoreAllMocks());
 

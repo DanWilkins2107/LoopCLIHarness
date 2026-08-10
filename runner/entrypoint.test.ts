@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { spawn } from "node:child_process";
 import { makeLog, emitResult, preflight } from "./entrypoint";
-import { fakeChild } from "./test-harness";
+import { fakeChild } from "../test-helpers/fake-child";
 import type { PipedChild } from "./session";
 
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
