@@ -23,6 +23,13 @@ vi.mock("./backoff", async (importOriginal) => ({
 const NODE = "n1";
 const ARGV = process.argv;
 
+// sleepMsMock resolves immediately, so a mutant that breaks the shutdown path
+// spins forever. Every loop iteration spawns `aj`, and a throw there is fatal in
+// loop.ts, so capping that spawn turns a hang into a failed assertion.
+// Exactly the longest legitimate run — the retry-budget test: MAX_RETRIES + 1
+// node attempts, then the full idle window. A new longer test must raise this.
+const MAX_AJ_SPAWNS = MAX_RETRIES + 1 + IDLE_SHUTDOWN_S / IDLE_INTERVAL_S + 1;
+
 interface Script {
   stdout?: string;
   stderr?: string;
@@ -94,7 +101,6 @@ async function run(opts: RunOptions = {}) {
   }) as never);
   vi.spyOn(Date, "now").mockImplementation(() => clock);
 
-  signals = {};
   vi.spyOn(process, "on").mockImplementation(((sig: string, h: () => void) => {
     (signals[sig] ??= []).push(h);
     return process;
@@ -110,8 +116,11 @@ async function run(opts: RunOptions = {}) {
 
   const tasks = opts.tasks ?? [];
   const runs = opts.runs ?? [];
+  let ajSpawns = 0;
   spawnMock.mockImplementation(((bin: string, args: string[]) => {
     if (opts.spawnThrows) throw opts.spawnThrows;
+    if (bin === "aj" && ++ajSpawns > MAX_AJ_SPAWNS)
+      throw new Error("spawn cap");
     spawns.push([bin, args]);
     const s = (bin === "aj" ? tasks.shift() : runs.shift()) ?? idle();
     const child = fakeChild();
@@ -129,6 +138,9 @@ async function run(opts: RunOptions = {}) {
   await import("./loop");
   await exited;
 
+  if (ajSpawns > MAX_AJ_SPAWNS)
+    throw new Error(`loop did not terminate: exceeded ${MAX_AJ_SPAWNS} spawns`);
+
   return {
     code: exits[0],
     stderr: err.join(""),
@@ -140,6 +152,9 @@ async function run(opts: RunOptions = {}) {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  spawnMock.mockReset();
+  sleepMsMock.mockReset();
+  signals = {};
   process.argv = ARGV;
 });
 
