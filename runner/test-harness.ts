@@ -1,33 +1,5 @@
-import { EventEmitter } from "node:events";
 import { expect, vi, type Mock } from "vitest";
-import type { PipedChild } from "./session";
-
-export interface Script {
-  stdout?: string;
-  stderr?: string;
-  code?: number | null;
-  error?: string;
-}
-
-// A ChildProcess stand-in for the spawn mock: EventEmitters in place of the
-// three stdio streams, so a test drives a child by emitting on it. Typed as a
-// fully piped child — fds the caller ignored are simply never listened to.
-export function fakeChild(): PipedChild {
-  const child = new EventEmitter();
-  return Object.assign(child, {
-    stdout: new EventEmitter(),
-    stderr: new EventEmitter(),
-    // The no-op "error" listener keeps an unhandled emit from throwing on the
-    // spawns whose caller ignores stdin.
-    stdin: Object.assign(
-      new EventEmitter().on("error", () => {}),
-      {
-        write: () => true,
-        end: () => {},
-      },
-    ),
-  }) as unknown as PipedChild;
-}
+import { fakeChild, type Script } from "../test-helpers/fake-child";
 
 // process.exit never returns, so the stub throws to unwind main the way the real
 // thing does. The module's top-level .catch then exits once more on its way out —
