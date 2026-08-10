@@ -82,6 +82,37 @@ interface RunOptions {
   unwind?: boolean;
 }
 
+function installSpawnMock(opts: RunOptions, spawns: [string, string[]][]) {
+  const tasks = opts.tasks ?? [];
+  const runs = opts.runs ?? [];
+  let ajSpawns = 0;
+
+  const capAjSpawns = (bin: string) => {
+    if (bin === "aj" && ++ajSpawns > MAX_AJ_SPAWNS)
+      throw new Error("spawn cap");
+  };
+  const nextScript = (bin: string) =>
+    (bin === "aj" ? tasks.shift() : runs.shift()) ?? idle();
+
+  spawnMock.mockImplementation(((bin: string, args: string[]) => {
+    if (opts.spawnThrows) throw opts.spawnThrows;
+    capAjSpawns(bin);
+    spawns.push([bin, args]);
+    const s = nextScript(bin);
+    const child = fakeChild();
+    s.onSpawn?.();
+    setImmediate(() => {
+      if (s.error) return void child.emit("error", new Error(s.error));
+      if (s.stdout) child.stdout.emit("data", s.stdout);
+      if (s.stderr) child.stderr.emit("data", s.stderr);
+      child.emit("close", s.code ?? 0);
+    });
+    return child;
+  }) as never);
+
+  return () => ajSpawns;
+}
+
 async function run(opts: RunOptions = {}) {
   const exits: number[] = [];
   const out: string[] = [];
@@ -121,31 +152,13 @@ async function run(opts: RunOptions = {}) {
     return Promise.resolve();
   });
 
-  const tasks = opts.tasks ?? [];
-  const runs = opts.runs ?? [];
-  let ajSpawns = 0;
-  spawnMock.mockImplementation(((bin: string, args: string[]) => {
-    if (opts.spawnThrows) throw opts.spawnThrows;
-    if (bin === "aj" && ++ajSpawns > MAX_AJ_SPAWNS)
-      throw new Error("spawn cap");
-    spawns.push([bin, args]);
-    const s = (bin === "aj" ? tasks.shift() : runs.shift()) ?? idle();
-    const child = fakeChild();
-    s.onSpawn?.();
-    setImmediate(() => {
-      if (s.error) return void child.emit("error", new Error(s.error));
-      if (s.stdout) child.stdout.emit("data", s.stdout);
-      if (s.stderr) child.stderr.emit("data", s.stderr);
-      child.emit("close", s.code ?? 0);
-    });
-    return child;
-  }) as never);
+  const ajSpawnCount = installSpawnMock(opts, spawns);
 
   vi.resetModules();
   await import("./loop");
   await withDeadline(exited);
 
-  if (ajSpawns > MAX_AJ_SPAWNS)
+  if (ajSpawnCount() > MAX_AJ_SPAWNS)
     throw new Error(`loop did not terminate: exceeded ${MAX_AJ_SPAWNS} spawns`);
 
   return {
