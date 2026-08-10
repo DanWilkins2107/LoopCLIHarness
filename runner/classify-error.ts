@@ -10,28 +10,27 @@ const API_ERROR_RE =
   /overloaded_error|(?:\b|_)529\b|\b5\d\d\b|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|connection error|network error/i;
 
 function resultField(line: string): string | null {
+  let env;
   try {
-    const env = JSON.parse(line);
-    return typeof env?.result === "string" ? env.result : null;
+    env = JSON.parse(line);
   } catch {
     return null;
   }
+  if (env === null) return null;
+  return typeof env.result === "string" ? env.result : null;
 }
 
-function lastResult(stdout: string): string | null {
-  const lines = stdout.trim().split(/\r?\n/).reverse();
-  for (const line of lines) {
-    const result = resultField(line);
-    if (result !== null) return result;
-  }
-  return null;
-}
-
-export function classifyError(stdout: string): EnvelopeClass {
-  const result = lastResult(stdout);
-  if (result == null) return { outcome: "unknown" };
+function classifyResult(result: string): EnvelopeClass {
   const limit = USAGE_LIMIT_RE.exec(result);
   if (limit) return { outcome: "usage_limited", reset_at: Number(limit[1]) };
   if (API_ERROR_RE.test(result)) return { outcome: "api_error" };
+  return { outcome: "unknown" };
+}
+
+export function classifyError(stdout: string): EnvelopeClass {
+  for (const line of stdout.split(/\r?\n/).reverse()) {
+    const result = resultField(line);
+    if (result !== null) return classifyResult(result);
+  }
   return { outcome: "unknown" };
 }
