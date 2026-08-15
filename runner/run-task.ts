@@ -29,9 +29,11 @@ function emitAndExit(
   detail: string,
   resetAt?: number,
 ): never {
-  const payload: Record<string, unknown> = { outcome, detail };
-  if (resetAt !== undefined) payload.reset_at = resetAt;
-  emitResult(nodeId, EXIT_CODES[outcome], payload);
+  emitResult(nodeId, EXIT_CODES[outcome], {
+    outcome,
+    detail,
+    reset_at: resetAt,
+  });
 }
 
 const log = makeLog("run-task");

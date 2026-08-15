@@ -15,6 +15,36 @@ vi.mock("./entrypoint", async (importOriginal) => ({
 const NODE = "n1";
 const ARGV = process.argv;
 
+// Literal, not built from buildPrompt: the prompt is the contract with the
+// session, so a change here should be a deliberate edit to both sides.
+const PROMPT = `You are a headless AgentJira worker session. Work exactly one node: n1.
+
+Load the agentjira-workflow skill first, then the stage-appropriate
+AgentJira skill, and follow them. Claim the node, load its full context
+with the aj CLI, and do the stage-appropriate work to completion
+(break down, spec, or implement + raise a PR).
+
+Do not ask for confirmation on routine steps — you are running
+non-interactively. If the direction is genuinely ambiguous, post a
+question with \`aj post n1 --type question\` (which hands the node
+back to the human) instead of guessing, then stop. If you stop without
+finishing the stage, run \`aj unclaim n1\`.`;
+
+const USAGE = `Usage: run-task <node-id>
+
+Runs one AgentJira node in one fresh headless auto-mode Claude Code
+session and prints a machine-readable outcome to stdout:
+  { "node_id", "outcome", "detail" }
+
+Outcomes and exit codes:
+  completed     (exit 0)
+  asked_user    (exit 10)
+  errored       (exit 20)
+  usage_limited (exit 21)  + reset_at epoch in the result line
+  api_error     (exit 22)
+
+`;
+
 interface RunOptions {
   argv?: string[];
   scripts?: Script[];
@@ -54,7 +84,7 @@ describe("usage", () => {
   it("prints usage and exits 2 with no arguments", async () => {
     const { code, stderr } = await run({ argv: [] });
     expect(code).toBe(2);
-    expect(stderr).toContain("Usage: run-task <node-id>");
+    expect(stderr).toBe(USAGE);
   });
 
   it("prints usage and exits 0 for --help", async () => {
@@ -74,11 +104,12 @@ describe("preflight gates", () => {
   });
 
   it("errors when the aj preflight fails", async () => {
-    const { code, result } = await run({
+    const { code, result, stderr } = await run({
       preflight: () => Promise.resolve({ ok: false, detail: "no auth" }),
     });
     expect(code).toBe(20);
     expect(result.detail).toBe("preflight: no auth");
+    expect(stderr).toContain("[run-task] preflight failed: no auth");
   });
 
   it("errors when bwrap is not runnable", async () => {
@@ -96,7 +127,7 @@ describe("preflight gates", () => {
 
 describe("session outcomes", () => {
   it("completes and sandboxes the session via bwrap", async () => {
-    const { code, result, spawns } = await run({
+    const { code, result, spawns, stdins, stderr } = await run({
       scripts: [OK_BWRAP, OK_SESSION, status("done")],
     });
     expect(code).toBe(0);
@@ -105,10 +136,29 @@ describe("session outcomes", () => {
       outcome: "completed",
       detail: "node status=done",
     });
-    expect(spawns[0]).toEqual(["bwrap", ["--version"]]);
+    expect(spawns[0]).toEqual([
+      "bwrap",
+      ["--version"],
+      { stdio: ["ignore", "ignore", "pipe"] },
+    ]);
     expect(spawns[1][0]).toBe("bwrap");
     expect(spawns[1][1]).toContain("claude");
-    expect(spawns[2]).toEqual(["aj", ["context", NODE, "--json"]]);
+    expect(spawns[1][2]).toEqual({ stdio: ["pipe", "pipe", "pipe"] });
+    expect(spawns[2]).toEqual([
+      "aj",
+      ["context", NODE, "--json"],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    ]);
+    expect(stdins[1]).toBe(PROMPT);
+    // Whole stream: the run's log lines in order, with the session's own
+    // output and `aj`'s stderr passed through untouched between them.
+    expect(stderr).toBe(
+      "[run-task] running node n1\n" +
+        "[run-task] session sandboxed via bwrap (workdir=/srv/session-work)\n" +
+        envelope("done") +
+        "aj chatter\n" +
+        "[run-task] outcome=completed (node status=done)\n",
+    );
   });
 
   it("reports asked_user when the node ends awaiting a human", async () => {
@@ -117,6 +167,7 @@ describe("session outcomes", () => {
     });
     expect(code).toBe(10);
     expect(result.outcome).toBe("asked_user");
+    expect(result.detail).toBe("node status=awaiting_human_response");
   });
 
   it("errors when the status lookup output is unparseable", async () => {
@@ -198,6 +249,21 @@ describe("error escalation", () => {
     expect(code).toBe(22);
     expect(result.outcome).toBe("api_error");
     expect(result.reset_at).toBeUndefined();
+  });
+
+  it("does not escalate when the session exited cleanly", async () => {
+    const { code, result } = await run({
+      scripts: [
+        OK_BWRAP,
+        {
+          stdout: envelope("Claude AI usage limit reached|1750000000"),
+          code: 0,
+        },
+        status("done"),
+      ],
+    });
+    expect(code).toBe(0);
+    expect(result.outcome).toBe("completed");
   });
 });
 
