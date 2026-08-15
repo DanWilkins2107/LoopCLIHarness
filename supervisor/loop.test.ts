@@ -21,6 +21,34 @@ vi.mock("./backoff", async (importOriginal) => ({
 const NODE = "n1";
 const ARGV = process.argv;
 
+// sleepMsMock resolves immediately, so a mutant that breaks the shutdown path
+// spins forever. Every loop iteration spawns `aj`, and a throw there is fatal in
+// loop.ts, so capping that spawn turns a hang into a failed assertion.
+// Exactly the longest legitimate run — the retry-budget test: MAX_RETRIES + 1
+// node attempts, then the full idle window. A new longer test must raise this.
+const MAX_AJ_SPAWNS = MAX_RETRIES + 1 + IDLE_SHUTDOWN_S / IDLE_INTERVAL_S + 1;
+
+// A mutant can also strand a promise instead of spinning — drop a `done` call,
+// empty a close handler, rename an event — and loop.ts then sits idle, so the
+// spawn cap never trips. Vitest's own 5s timeout does catch it, but Stryker's
+// timeout races that and often wins, scoring a flaky timeout instead of a kill.
+// Failing well inside both makes it deterministic. Real runs take a few ms.
+const EXIT_DEADLINE_MS = 2000;
+
+function withDeadline(exited: Promise<void>): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new Error(`loop did not terminate: no exit in ${EXIT_DEADLINE_MS}ms`),
+        ),
+      EXIT_DEADLINE_MS,
+    );
+  });
+  return Promise.race([exited, deadline]).finally(() => clearTimeout(timer));
+}
+
 interface LoopScript extends Script {
   onSpawn?: () => void;
 }
@@ -54,6 +82,37 @@ interface RunOptions {
   unwind?: boolean;
 }
 
+function installSpawnMock(opts: RunOptions, spawns: [string, string[]][]) {
+  const tasks = opts.tasks ?? [];
+  const runs = opts.runs ?? [];
+  let ajSpawns = 0;
+
+  const capAjSpawns = (bin: string) => {
+    if (bin === "aj" && ++ajSpawns > MAX_AJ_SPAWNS)
+      throw new Error("spawn cap");
+  };
+  const nextScript = (bin: string) =>
+    (bin === "aj" ? tasks.shift() : runs.shift()) ?? idle();
+
+  spawnMock.mockImplementation(((bin: string, args: string[]) => {
+    if (opts.spawnThrows) throw opts.spawnThrows;
+    capAjSpawns(bin);
+    spawns.push([bin, args]);
+    const s = nextScript(bin);
+    const child = fakeChild();
+    s.onSpawn?.();
+    setImmediate(() => {
+      if (s.error) return void child.emit("error", new Error(s.error));
+      if (s.stdout) child.stdout.emit("data", s.stdout);
+      if (s.stderr) child.stderr.emit("data", s.stderr);
+      child.emit("close", s.code ?? 0);
+    });
+    return child;
+  }) as never);
+
+  return () => ajSpawns;
+}
+
 async function run(opts: RunOptions = {}) {
   const exits: number[] = [];
   const out: string[] = [];
@@ -80,7 +139,6 @@ async function run(opts: RunOptions = {}) {
   }) as never);
   vi.spyOn(Date, "now").mockImplementation(() => clock);
 
-  signals = {};
   vi.spyOn(process, "on").mockImplementation(((sig: string, h: () => void) => {
     (signals[sig] ??= []).push(h);
     return process;
@@ -94,26 +152,14 @@ async function run(opts: RunOptions = {}) {
     return Promise.resolve();
   });
 
-  const tasks = opts.tasks ?? [];
-  const runs = opts.runs ?? [];
-  spawnMock.mockImplementation(((bin: string, args: string[]) => {
-    if (opts.spawnThrows) throw opts.spawnThrows;
-    spawns.push([bin, args]);
-    const s = (bin === "aj" ? tasks.shift() : runs.shift()) ?? idle();
-    const child = fakeChild();
-    s.onSpawn?.();
-    setImmediate(() => {
-      if (s.error) return void child.emit("error", new Error(s.error));
-      if (s.stdout) child.stdout.emit("data", s.stdout);
-      if (s.stderr) child.stderr.emit("data", s.stderr);
-      child.emit("close", s.code ?? 0);
-    });
-    return child;
-  }) as never);
+  const ajSpawnCount = installSpawnMock(opts, spawns);
 
   vi.resetModules();
   await import("./loop");
-  await exited;
+  await withDeadline(exited);
+
+  if (ajSpawnCount() > MAX_AJ_SPAWNS)
+    throw new Error(`loop did not terminate: exceeded ${MAX_AJ_SPAWNS} spawns`);
 
   return {
     code: exits[0],
@@ -126,6 +172,9 @@ async function run(opts: RunOptions = {}) {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  spawnMock.mockReset();
+  sleepMsMock.mockReset();
+  signals = {};
   process.argv = ARGV;
 });
 

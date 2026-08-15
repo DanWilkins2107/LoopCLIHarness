@@ -10,6 +10,7 @@ out/
 
 # Mutation testing
 .stryker-tmp/
+stryker-setup-*.js
 
 # Environment / secrets
 .env
