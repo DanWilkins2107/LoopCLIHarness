@@ -272,9 +272,10 @@ async function main(): Promise<void> {
   log(`starting${projectId ? ` (project ${projectId})` : ""}`);
 
   const idle = makeIdleTimer();
-  while (!stopping) {
-    if (!(await runOnce(projectId, tally, idle))) break;
-  }
+  // Bodyless on purpose: a block here gives mutation testing an empty-block
+  // mutant that spins the thread forever. In the condition, every mutant still
+  // awaits runOnce, so the test harness spawn cap can stop it.
+  while ((await runOnce(projectId, tally, idle)) && !stopping);
 
   printSummary(tally);
   process.exit(0);
