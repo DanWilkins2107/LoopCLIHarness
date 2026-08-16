@@ -27,6 +27,13 @@ export function captureProcess(unwind: boolean) {
   return { exits, out, err };
 }
 
+function emitScript(child: ReturnType<typeof fakeChild>, s: Script) {
+  if (s.error) return void child.emit("error", new Error(s.error));
+  if (s.stdout) child.stdout.emit("data", s.stdout);
+  if (s.stderr) child.stderr.emit("data", s.stderr);
+  child.emit("close", s.code ?? 0);
+}
+
 // One scripted child per spawn, in call order: each script says what the child
 // emits before it closes.
 export function scriptedSpawn(scripts: Script[]) {
@@ -51,10 +58,7 @@ export function scriptedSpawn(scripts: Script[]) {
     const s = remaining.shift() as Script;
     setImmediate(() => {
       if (pipesStdin) child.stdin.emit("error", new Error("EPIPE"));
-      if (s.error) return void child.emit("error", new Error(s.error));
-      if (s.stdout) child.stdout.emit("data", s.stdout);
-      if (s.stderr) child.stderr.emit("data", s.stderr);
-      child.emit("close", s.code ?? 0);
+      emitScript(child, s);
     });
     return child;
   };
