@@ -1,4 +1,5 @@
 import { expect, vi, type Mock } from "vitest";
+import type { SpawnOptions } from "node:child_process";
 import { fakeChild, type Script } from "../test-helpers/fake-child";
 
 // process.exit never returns, so the stub throws to unwind main the way the real
@@ -26,27 +27,42 @@ export function captureProcess(unwind: boolean) {
   return { exits, out, err };
 }
 
+function emitScript(child: ReturnType<typeof fakeChild>, s: Script) {
+  if (s.error) return void child.emit("error", new Error(s.error));
+  if (s.stdout) child.stdout.emit("data", s.stdout);
+  if (s.stderr) child.stderr.emit("data", s.stderr);
+  child.emit("close", s.code ?? 0);
+}
+
 // One scripted child per spawn, in call order: each script says what the child
 // emits before it closes.
 export function scriptedSpawn(scripts: Script[]) {
   const remaining = [...scripts];
-  const spawns: [string, string[]][] = [];
-  const impl = (bin: string, args: string[]) => {
-    spawns.push([bin, args]);
+  const spawns: [string, string[], SpawnOptions][] = [];
+  const stdins: string[] = [];
+  const impl = (bin: string, args: string[], opts: SpawnOptions) => {
+    const index = spawns.push([bin, args, opts]) - 1;
+    stdins[index] = "";
     const child = fakeChild();
+    child.stdin.write = ((chunk: unknown) => {
+      stdins[index] += String(chunk);
+      return true;
+    }) as typeof child.stdin.write;
+    // fake-child pre-attaches a no-op stdin "error" listener, which would mask
+    // a missing guard in the module under test. Drop it so the module's own
+    // listener is the only thing keeping the EPIPE below from throwing.
+    child.stdin.removeAllListeners("error");
+    const pipesStdin = Array.isArray(opts.stdio) && opts.stdio[0] === "pipe";
     // Callers supply exactly one script per expected spawn; an unscripted spawn
     // is a bug in the test, and blows up here rather than passing silently.
     const s = remaining.shift() as Script;
     setImmediate(() => {
-      child.stdin.emit("error", new Error("EPIPE"));
-      if (s.error) return void child.emit("error", new Error(s.error));
-      if (s.stdout) child.stdout.emit("data", s.stdout);
-      if (s.stderr) child.stderr.emit("data", s.stderr);
-      child.emit("close", s.code ?? 0);
+      if (pipesStdin) child.stdin.emit("error", new Error("EPIPE"));
+      emitScript(child, s);
     });
     return child;
   };
-  return { spawns, impl };
+  return { spawns, stdins, impl };
 }
 
 export interface DriveOptions {
@@ -63,7 +79,7 @@ export async function driveEntry(
   opts: DriveOptions,
 ) {
   const { exits, out, err } = captureProcess(opts.unwind ?? true);
-  const { spawns, impl } = scriptedSpawn(opts.scripts ?? []);
+  const { spawns, stdins, impl } = scriptedSpawn(opts.scripts ?? []);
   spawnMock.mockImplementation(impl);
 
   vi.resetModules();
@@ -74,6 +90,7 @@ export async function driveEntry(
     code: exits[0],
     stderr: err.join(""),
     spawns,
+    stdins,
     result: JSON.parse(out[0]),
   };
 }

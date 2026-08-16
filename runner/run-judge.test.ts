@@ -81,6 +81,7 @@ describe("verdicts", () => {
         "--output-format",
         "json",
       ],
+      { stdio: ["pipe", "pipe", "pipe"] },
     ]);
   });
 

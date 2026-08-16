@@ -8,7 +8,6 @@
     "!*.test.ts",
     "!vitest.config.ts",
     "!test-harness.ts",
-    "!run-task.ts",
     "!run-judge.ts"
   ],
   "thresholds": { "high": 100, "low": 0, "break": 100 }
