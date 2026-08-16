@@ -3,6 +3,6 @@
   "coverageAnalysis": "perTest",
   "inPlace": true,
   "reporters": ["progress", "clear-text"],
-  "mutate": ["*.ts", "!*.test.ts", "!vitest.config.ts", "!loop.ts"],
+  "mutate": ["*.ts", "!*.test.ts", "!vitest.config.ts"],
   "thresholds": { "high": 100, "low": 0, "break": 100 }
 }
