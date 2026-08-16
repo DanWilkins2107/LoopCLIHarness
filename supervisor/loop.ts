@@ -24,8 +24,8 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const RUNNER_ENTRY = resolve(HERE, "..", "runner", "run-task.ts");
 const USAGE = "Usage: loop [--project <id>]";
 
-function log(...args: string[]): void {
-  process.stderr.write("[supervisor] " + args.join(" ") + "\n");
+function log(msg: string): void {
+  process.stderr.write("[supervisor] " + msg + "\n");
 }
 
 function fetchRecommended(

@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import { fakeChild, type Script } from "../test-helpers/fake-child";
 import {
   RESET_MARGIN_S,
@@ -20,6 +22,11 @@ vi.mock("./backoff", async (importOriginal) => ({
 
 const NODE = "n1";
 const ARGV = process.argv;
+const RUNNER_ENTRY = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../runner/run-task.ts",
+);
+const STDIO = { stdio: ["ignore", "pipe", "pipe"] };
 
 // sleepMsMock resolves immediately, so a mutant that breaks the shutdown path
 // spins forever. Every loop iteration spawns `aj`, and a throw there is fatal in
@@ -82,7 +89,7 @@ interface RunOptions {
   unwind?: boolean;
 }
 
-function installSpawnMock(opts: RunOptions, spawns: [string, string[]][]) {
+function installSpawnMock(opts: RunOptions) {
   const tasks = opts.tasks ?? [];
   const runs = opts.runs ?? [];
   let ajSpawns = 0;
@@ -94,10 +101,9 @@ function installSpawnMock(opts: RunOptions, spawns: [string, string[]][]) {
   const nextScript = (bin: string) =>
     (bin === "aj" ? tasks.shift() : runs.shift()) ?? idle();
 
-  spawnMock.mockImplementation(((bin: string, args: string[]) => {
+  spawnMock.mockImplementation(((bin: string) => {
     if (opts.spawnThrows) throw opts.spawnThrows;
     capAjSpawns(bin);
-    spawns.push([bin, args]);
     const s = nextScript(bin);
     const child = fakeChild();
     s.onSpawn?.();
@@ -118,7 +124,6 @@ async function run(opts: RunOptions = {}) {
   const out: string[] = [];
   const err: string[] = [];
   const sleeps: number[] = [];
-  const spawns: [string, string[]][] = [];
   let clock = 0;
 
   let markExited = (): void => {};
@@ -152,7 +157,7 @@ async function run(opts: RunOptions = {}) {
     return Promise.resolve();
   });
 
-  const ajSpawnCount = installSpawnMock(opts, spawns);
+  const ajSpawnCount = installSpawnMock(opts);
 
   vi.resetModules();
   await import("./loop");
@@ -164,8 +169,9 @@ async function run(opts: RunOptions = {}) {
   return {
     code: exits[0],
     stderr: err.join(""),
+    stdout: out.join(""),
     sleeps,
-    spawns,
+    spawns: spawnMock.mock.calls,
     summary: out.length ? JSON.parse(out[0]) : null,
   };
 }
@@ -181,7 +187,7 @@ afterEach(() => {
 describe("arguments", () => {
   it("runs without a project filter by default", async () => {
     const { spawns, stderr } = await run();
-    expect(spawns[0]).toEqual(["aj", ["tasks", "--json"]]);
+    expect(spawns[0]).toEqual(["aj", ["tasks", "--json"], STDIO]);
     expect(stderr).toContain("[supervisor] starting\n");
   });
 
@@ -189,7 +195,11 @@ describe("arguments", () => {
     "passes %s through to aj tasks",
     async (flag) => {
       const { spawns, stderr } = await run({ argv: [flag, "proj"] });
-      expect(spawns[0]).toEqual(["aj", ["tasks", "--json", "-p", "proj"]]);
+      expect(spawns[0]).toEqual([
+        "aj",
+        ["tasks", "--json", "-p", "proj"],
+        STDIO,
+      ]);
       expect(stderr).toContain("starting (project proj)");
     },
   );
@@ -197,7 +207,7 @@ describe("arguments", () => {
   it("prints usage and exits 2 on a malformed project argument", async () => {
     const { code, stderr } = await run({ argv: ["--project"], unwind: true });
     expect(code).toBe(2);
-    expect(stderr).toContain("Usage: loop [--project <id>]");
+    expect(stderr).toContain("Usage: loop [--project <id>]\n");
   });
 });
 
@@ -218,9 +228,12 @@ describe("aj tasks failures", () => {
   });
 
   it("mirrors aj stderr and treats a missing recommended list as empty", async () => {
-    const { stderr } = await run({ tasks: [{ stdout: "{}", stderr: "hmm" }] });
+    const { stderr, spawns } = await run({
+      tasks: [{ stdout: "{}", stderr: "hmm" }],
+    });
     expect(stderr).toContain("hmm");
     expect(stderr).toContain("idle — no recommended task");
+    expect(spawns.filter(([bin]) => bin === "tsx")).toHaveLength(0);
   });
 });
 
@@ -246,8 +259,7 @@ describe("node outcomes", () => {
         runs: [outcome(o)],
       });
       expect(summary[o]).toBe(1);
-      expect(spawns[1][0]).toBe("tsx");
-      expect(spawns[1][1][1]).toBe(NODE);
+      expect(spawns[1]).toEqual(["tsx", [RUNNER_ENTRY, NODE], STDIO]);
     },
   );
 
@@ -258,6 +270,7 @@ describe("node outcomes", () => {
     });
     expect(stderr).toContain(`running ${NODE} — Coverage gate`);
     expect(stderr).toContain(`${NODE} -> completed (d)`);
+    expect(stderr).toContain("runner chatter");
   });
 
   it("logs a bare node id when there is no title", async () => {
@@ -347,18 +360,20 @@ describe("api errors", () => {
 
 describe("shutdown", () => {
   it("stops after the current node when a signal arrives", async () => {
-    const { code, summary, stderr } = await run({
+    const { code, stdout, stderr } = await run({
       tasks: [recommend()],
       runs: [{ ...outcome("completed"), onSpawn: () => raise("SIGINT") }],
     });
     expect(stderr).toContain("SIGINT received — stopping after current node");
-    expect(summary).toEqual({
-      attempted: 1,
-      completed: 1,
-      asked_user: 0,
-      errored: 0,
-      errored_node_ids: [],
-    });
+    expect(stdout).toBe(
+      JSON.stringify({
+        attempted: 1,
+        completed: 1,
+        asked_user: 0,
+        errored: 0,
+        errored_node_ids: [],
+      }) + "\n",
+    );
     expect(code).toBe(0);
   });
 
