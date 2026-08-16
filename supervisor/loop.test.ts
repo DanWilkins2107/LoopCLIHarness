@@ -42,6 +42,10 @@ const MAX_AJ_SPAWNS = MAX_RETRIES + 1 + IDLE_SHUTDOWN_S / IDLE_INTERVAL_S + 1;
 // Failing well inside both makes it deterministic. Real runs take a few ms.
 const EXIT_DEADLINE_MS = 2000;
 
+// The fake clock must not start at 0, or `a - b` and `a + b` on a timestamp are
+// indistinguishable and a null `since` coerces to the same instant as the real one.
+const START_CLOCK_S = 30;
+
 function withDeadline(exited: Promise<void>): Promise<void> {
   let timer: NodeJS.Timeout | undefined;
   const deadline = new Promise<never>((_, reject) => {
@@ -124,7 +128,7 @@ async function run(opts: RunOptions = {}) {
   const out: string[] = [];
   const err: string[] = [];
   const sleeps: number[] = [];
-  let clock = 0;
+  let clock = START_CLOCK_S * 1000;
 
   let markExited = (): void => {};
   const exited = new Promise<void>((r) => (markExited = r));
@@ -204,11 +208,14 @@ describe("arguments", () => {
     },
   );
 
-  it("prints usage and exits 2 on a malformed project argument", async () => {
-    const { code, stderr } = await run({ argv: ["--project"], unwind: true });
-    expect(code).toBe(2);
-    expect(stderr).toContain("Usage: loop [--project <id>]\n");
-  });
+  it.each([["--project"], ["--bogus", "x"]])(
+    "prints usage and exits 2 on a malformed argument list starting %s",
+    async (...argv) => {
+      const { code, stderr } = await run({ argv, unwind: true });
+      expect(code).toBe(2);
+      expect(stderr).toContain("Usage: loop [--project <id>]\n");
+    },
+  );
 });
 
 describe("aj tasks failures", () => {
@@ -221,10 +228,11 @@ describe("aj tasks failures", () => {
       "aj tasks --json returned unparseable output",
     ],
   ])("aborts on %s", async (_label, script: Script, detail) => {
-    const { code, stderr, summary } = await run({ tasks: [script] });
+    const { code, stderr, summary, spawns } = await run({ tasks: [script] });
     expect(code).toBe(0);
     expect(stderr).toContain(`aborting: ${detail}`);
     expect(summary.attempted).toBe(0);
+    expect(spawns).toHaveLength(1);
   });
 
   it("mirrors aj stderr and treats a missing recommended list as empty", async () => {
@@ -247,6 +255,14 @@ describe("idling", () => {
       `idle ${IDLE_SHUTDOWN_S}s with nothing in progress`,
     );
     expect(code).toBe(0);
+  });
+
+  it("restarts the idle window after running a node", async () => {
+    const { sleeps } = await run({
+      tasks: [idle(), recommend()],
+      runs: [outcome("completed")],
+    });
+    expect(sleeps).toHaveLength(1 + IDLE_SHUTDOWN_S / IDLE_INTERVAL_S);
   });
 });
 
@@ -307,6 +323,14 @@ describe("node outcomes", () => {
     expect(stderr).toContain(`${NODE} -> completed ()`);
   });
 
+  it("never re-runs a node it has already completed", async () => {
+    const { spawns } = await run({
+      tasks: [recommend(), recommend()],
+      runs: [outcome("completed")],
+    });
+    expect(spawns.filter(([bin]) => bin === "tsx")).toHaveLength(1);
+  });
+
   it("never re-runs a node it has already errored", async () => {
     const { spawns } = await run({
       tasks: [recommend(), recommend()],
@@ -318,11 +342,15 @@ describe("node outcomes", () => {
 
 describe("usage limits", () => {
   it("sleeps until the reported reset, plus the margin", async () => {
-    const { sleeps } = await run({
+    const waitS = 100 + RESET_MARGIN_S - START_CLOCK_S;
+    const { sleeps, stderr } = await run({
       tasks: [recommend()],
       runs: [outcome("usage_limited", { reset_at: 100 })],
     });
-    expect(sleeps[0]).toBe((100 + RESET_MARGIN_S) * 1000);
+    expect(sleeps[0]).toBe(waitS * 1000);
+    expect(stderr).toContain(
+      `${NODE} usage-limited; sleeping ${waitS}s until reset`,
+    );
   });
 
   it("falls back to the fixed cooldown when no reset is reported", async () => {
